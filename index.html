@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>名刺OCR</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 20px;
+    }
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 20px;
+      color: #e94560;
+    }
+    .camera-area {
+      width: 100%;
+      max-width: 400px;
+      margin-bottom: 20px;
+    }
+    video, canvas {
+      width: 100%;
+      border-radius: 12px;
+      display: block;
+    }
+    canvas { display: none; }
+    .preview-img {
+      width: 100%;
+      border-radius: 12px;
+      display: none;
+      margin-bottom: 10px;
+    }
+    .btn {
+      width: 100%;
+      max-width: 400px;
+      padding: 16px;
+      border: none;
+      border-radius: 12px;
+      font-size: 1.1rem;
+      font-weight: bold;
+      cursor: pointer;
+      margin-bottom: 10px;
+      transition: all 0.2s;
+    }
+    .btn-capture {
+      background: #e94560;
+      color: white;
+    }
+    .btn-capture:hover { background: #c81e45; }
+    .btn-send {
+      background: #0f3460;
+      color: white;
+      display: none;
+    }
+    .btn-send:hover { background: #16213e; }
+    .btn-retry {
+      background: #533483;
+      color: white;
+      display: none;
+    }
+    .status {
+      width: 100%;
+      max-width: 400px;
+      margin-top: 15px;
+      padding: 15px;
+      border-radius: 12px;
+      background: #16213e;
+      display: none;
+      line-height: 1.8;
+    }
+    .status.show { display: block; }
+    .status h3 { color: #e94560; margin-bottom: 8px; }
+    .loading {
+      text-align: center;
+      color: #e94560;
+      font-weight: bold;
+      display: none;
+    }
+    .loading.show { display: block; }
+    .result-row { 
+      display: flex; 
+      justify-content: space-between;
+      padding: 4px 0;
+      border-bottom: 1px solid #1a1a2e;
+    }
+    .result-label { color: #888; font-size: 0.9rem; }
+    .result-value { color: #e0e0e0; font-size: 0.9rem; text-align: right; }
+  </style>
+</head>
+<body>
+  <h1>名刺OCR</h1>
+
+  <div class="camera-area">
+    <video id="video" autoplay playsinline></video>
+    <canvas id="canvas"></canvas>
+    <img id="preview" class="preview-img">
+  </div>
+
+  <button id="btnCapture" class="btn btn-capture">撮影する</button>
+  <button id="btnSend" class="btn btn-send">この名刺を登録する</button>
+  <button id="btnRetry" class="btn btn-retry">撮り直す</button>
+
+  <div id="loading" class="loading">処理中...名刺を読み取っています</div>
+
+  <div id="status" class="status">
+    <h3>登録完了</h3>
+    <div id="resultContent"></div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
