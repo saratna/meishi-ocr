@@ -1,5 +1,5 @@
 // ===== ここにGASのウェブアプリURLを貼る =====
-const GAS_URL = 'ここにデプロイしたGASのURLを貼る';
+const GAS_URL = 'https://script.google.com/macros/s/AKfycbz9xDQyBcK0VJ_hV7XssOA5SoLuK_yv08DQp99Q-yiVoVohkiP_7MesINuNeJo6leA/exec';
 
 // ===== 要素取得 =====
 const video = document.getElementById('video');
