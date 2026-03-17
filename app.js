@@ -1,18 +1,51 @@
 // ===== ここにGASのウェブアプリURLを貼る =====
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbz9xDQyBcK0VJ_hV7XssOA5SoLuK_yv08DQp99Q-yiVoVohkiP_7MesINuNeJo6leA/exec';
+const GAS_URL = 'ここにデプロイしたGASのURLを貼る';
 
 // ===== 要素取得 =====
 const video = document.getElementById('video');
 const canvas = document.getElementById('canvas');
 const preview = document.getElementById('preview');
 const btnCapture = document.getElementById('btnCapture');
-const btnSend = document.getElementById('btnSend');
+const btnScan = document.getElementById('btnScan');
 const btnRetry = document.getElementById('btnRetry');
+const btnSave = document.getElementById('btnSave');
+const btnCancel = document.getElementById('btnCancel');
 const loading = document.getElementById('loading');
+const editForm = document.getElementById('editForm');
 const status = document.getElementById('status');
-const resultContent = document.getElementById('resultContent');
+const statusMsg = document.getElementById('statusMsg');
+const searchInput = document.getElementById('searchInput');
+const searchResults = document.getElementById('searchResults');
 
 let imageBase64 = '';
+
+// ===== フィールド定義 =====
+const FIELDS = [
+  { key: 'name', id: 'edit-name' },
+  { key: 'furigana', id: 'edit-furigana' },
+  { key: 'company', id: 'edit-company' },
+  { key: 'department', id: 'edit-department' },
+  { key: 'title', id: 'edit-title' },
+  { key: 'mobile1', id: 'edit-mobile1' },
+  { key: 'mobile2', id: 'edit-mobile2' },
+  { key: 'phone', id: 'edit-phone' },
+  { key: 'fax', id: 'edit-fax' },
+  { key: 'email1', id: 'edit-email1' },
+  { key: 'email2', id: 'edit-email2' },
+  { key: 'address', id: 'edit-address' },
+  { key: 'website', id: 'edit-website' },
+  { key: 'memo', id: 'edit-memo' }
+];
+
+// ===== タブ切り替え =====
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('tab-' + tab.dataset.tab).classList.add('active');
+  });
+});
 
 // ===== カメラ起動 =====
 async function startCamera() {
@@ -37,124 +70,158 @@ btnCapture.addEventListener('click', () => {
   const ctx = canvas.getContext('2d');
   ctx.drawImage(video, 0, 0);
 
-  // JPEG品質0.9で圧縮
   const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
   imageBase64 = dataUrl.split(',')[1];
 
-  // プレビュー表示
   preview.src = dataUrl;
   preview.style.display = 'block';
   video.style.display = 'none';
   btnCapture.style.display = 'none';
-  btnSend.style.display = 'block';
+  btnScan.style.display = 'block';
   btnRetry.style.display = 'block';
   status.classList.remove('show');
+  editForm.classList.remove('show');
 });
 
 // ===== 撮り直し =====
-btnRetry.addEventListener('click', () => {
+function resetCamera() {
   preview.style.display = 'none';
   video.style.display = 'block';
   btnCapture.style.display = 'block';
-  btnSend.style.display = 'none';
+  btnScan.style.display = 'none';
+  btnSave.style.display = 'none';
   btnRetry.style.display = 'none';
+  editForm.classList.remove('show');
   status.classList.remove('show');
   imageBase64 = '';
-});
+}
 
-// ===== 送信・登録 =====
-btnSend.addEventListener('click', async () => {
+btnRetry.addEventListener('click', resetCamera);
+btnCancel.addEventListener('click', resetCamera);
+
+// ===== 読み取り（OCR + Gemini → 編集フォームに表示） =====
+btnScan.addEventListener('click', async () => {
   if (!imageBase64) return;
 
-  btnSend.style.display = 'none';
+  btnScan.style.display = 'none';
   btnRetry.style.display = 'none';
   loading.classList.add('show');
-  status.classList.remove('show');
 
   try {
     const response = await fetch(GAS_URL, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: imageBase64 }),
-      mode: 'no-cors'
-    });
-
-    // no-corsモードではレスポンスが読めないため、
-    // 成功前提で処理（GAS側でエラーハンドリング済み）
-    loading.classList.remove('show');
-    
-    // GASからレスポンスを取得する代替方法
-    // no-corsの場合はリダイレクト方式を使う
-    await fetchWithRedirect(imageBase64);
-
-  } catch (err) {
-    loading.classList.remove('show');
-    alert('エラーが発生しました: ' + err.message);
-    btnSend.style.display = 'block';
-    btnRetry.style.display = 'block';
-  }
-});
-
-// ===== GASへの送信（リダイレクト対応版） =====
-async function fetchWithRedirect(base64) {
-  try {
-    const response = await fetch(GAS_URL, {
-      method: 'POST',
-      body: JSON.stringify({ image: base64 }),
+      body: JSON.stringify({ action: 'scan', image: imageBase64 }),
       redirect: 'follow'
     });
 
     const result = await response.json();
-
     loading.classList.remove('show');
 
     if (result.status === 'success') {
-      showResult(result.data);
+      // フォームに値をセット
+      FIELDS.forEach(f => {
+        document.getElementById(f.id).value = result.data[f.key] || '';
+      });
+      editForm.classList.add('show');
+      btnSave.style.display = 'block';
     } else {
-      alert('処理エラー: ' + (result.message || '不明なエラー'));
-      btnSend.style.display = 'block';
+      alert('読み取りエラー: ' + (result.message || '不明'));
+      btnScan.style.display = 'block';
       btnRetry.style.display = 'block';
     }
   } catch (err) {
     loading.classList.remove('show');
+    alert('通信エラー: ' + err.message);
+    btnScan.style.display = 'block';
+    btnRetry.style.display = 'block';
+  }
+});
 
-    // レスポンス読み取り不可の場合でも送信は成功している可能性
-    resultContent.innerHTML = '<p>送信しました。スプレッドシートを確認してください。</p>';
+// ===== 登録（編集後のデータをSheetsに書き込み） =====
+btnSave.addEventListener('click', async () => {
+  const cardData = {};
+  FIELDS.forEach(f => {
+    cardData[f.key] = document.getElementById(f.id).value;
+  });
+
+  btnSave.style.display = 'none';
+  loading.textContent = '登録中...';
+  loading.classList.add('show');
+
+  try {
+    const response = await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({ action: 'save', data: cardData }),
+      redirect: 'follow'
+    });
+
+    const result = await response.json();
+    loading.classList.remove('show');
+    loading.textContent = '処理中...名刺を読み取っています';
+
+    if (result.status === 'success') {
+      editForm.classList.remove('show');
+      statusMsg.textContent = cardData.name + ' / ' + cardData.company;
+      status.classList.add('show');
+      btnRetry.style.display = 'block';
+    } else {
+      alert('登録エラー: ' + (result.message || '不明'));
+      btnSave.style.display = 'block';
+    }
+  } catch (err) {
+    loading.classList.remove('show');
+    loading.textContent = '処理中...名刺を読み取っています';
+    // 送信は成功している可能性
+    editForm.classList.remove('show');
+    statusMsg.textContent = '送信しました。シートを確認してください。';
     status.classList.add('show');
     btnRetry.style.display = 'block';
   }
-}
+});
 
-// ===== 結果表示 =====
-function showResult(data) {
-  const fields = [
-    ['氏名', data.name],
-    ['ふりがな', data.furigana],
-    ['会社名', data.company],
-    ['部門', data.department],
-    ['役職', data.title],
-    ['携帯電話1', data.mobile1],
-    ['携帯電話2', data.mobile2],
-    ['電話番号', data.phone],
-    ['FAX', data.fax],
-    ['メール1', data.email1],
-    ['メール2', data.email2],
-    ['住所', data.address],
-    ['Web', data.website]
-  ];
+// ===== 検索機能 =====
+let searchTimer = null;
+searchInput.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    const query = searchInput.value.trim();
+    if (query.length < 1) {
+      searchResults.classList.remove('show');
+      return;
+    }
 
-  resultContent.innerHTML = fields
-    .filter(([_, val]) => val && val.length > 0)
-    .map(([label, val]) => `
-      <div class="result-row">
-        <span class="result-label">${label}</span>
-        <span class="result-value">${val}</span>
-      </div>
-    `).join('');
+    try {
+      const response = await fetch(GAS_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'search', query: query }),
+        redirect: 'follow'
+      });
 
-  status.classList.add('show');
-  btnRetry.style.display = 'block';
-}
+      const result = await response.json();
+
+      if (result.status === 'success' && result.data.length > 0) {
+        searchResults.innerHTML = result.data.map(card => `
+          <div class="search-card">
+            <div class="search-card-name">${card.name || '（氏名なし）'}</div>
+            <div class="search-card-company">${card.company || ''}${card.title ? ' / ' + card.title : ''}</div>
+            <div class="search-card-detail">
+              ${card.mobile1 ? '📱 ' + card.mobile1 + '<br>' : ''}
+              ${card.phone ? '📞 ' + card.phone + '<br>' : ''}
+              ${card.email1 ? '✉ ' + card.email1 + '<br>' : ''}
+              ${card.address ? '📍 ' + card.address : ''}
+            </div>
+          </div>
+        `).join('');
+        searchResults.classList.add('show');
+      } else {
+        searchResults.innerHTML = '<div class="search-card"><div class="search-card-name">該当なし</div></div>';
+        searchResults.classList.add('show');
+      }
+    } catch (err) {
+      // 検索エラーは静かに無視
+    }
+  }, 500);
+});
 
 // ===== 起動 =====
 startCamera();
