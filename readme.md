@@ -8,10 +8,10 @@ Pixel のカメラで名刺を撮影し、OCR + AI で構造化抽出、Google S
 ## システム構成
 
 Pixel（PWA）→ Google Apps Script（中継サーバー）
- ├→ Cloud Vision API（OCR）
- ├→ Gemini 2.5 Flash（構造化抽出）
- ├→ Google Sheets（名刺DB）
- └→ People API（Google連絡先同期）
+　├→ Cloud Vision API（OCR）
+　├→ Gemini 2.5 Flash（構造化抽出）
+　├→ Google Sheets（名刺DB）
+　└→ People API（Google連絡先同期）
 
 
 ## アーキテクチャ
