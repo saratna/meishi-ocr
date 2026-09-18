@@ -40,11 +40,14 @@ const canvas = document.getElementById('canvas');
 const previewFront = document.getElementById('previewFront');
 const previewBack = document.getElementById('previewBack');
 const previewBackWrap = document.getElementById('previewBackWrap');
+const previewPair = document.getElementById('previewPair');
 const captureLabel = document.getElementById('captureLabel');
+const captureHint = document.getElementById('captureHint');
 const btnCapture = document.getElementById('btnCapture');
 const btnCaptureBack = document.getElementById('btnCaptureBack');
 const btnScan = document.getElementById('btnScan');
 const btnRetry = document.getElementById('btnRetry');
+const btnRotate = document.getElementById('btnRotate');
 const btnSave = document.getElementById('btnSave');
 const btnCancel = document.getElementById('btnCancel');
 const loading = document.getElementById('loading');
@@ -56,10 +59,13 @@ const searchResults = document.getElementById('searchResults');
 
 // front | back
 let captureSide = 'front';
+let lastCapturedSide = 'front';
 let imageFront = '';
 let imageBack = '';
 let faceBox = null;
 let faceImage = '';
+// 手動回転した直後は横向き自動変換をスキップする側
+let skipAutoLandscape = { front: false, back: false };
 
 // ===== フィールド定義 =====
 const FIELDS = [
@@ -105,6 +111,69 @@ async function startCamera() {
   }
 }
 
+// ===== 画像ユーティリティ（名刺は横長が標準） =====
+function loadImageFromBase64(base64) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('画像の読み込みに失敗しました'));
+    img.src = 'data:image/jpeg;base64,' + base64;
+  });
+}
+
+function canvasToJpegBase64(sourceCanvas, quality) {
+  return sourceCanvas.toDataURL('image/jpeg', quality || 0.92).split(',')[1];
+}
+
+/** 時計回りに degrees（90/180/270）回転 */
+async function rotateBase64(base64, degrees) {
+  const img = await loadImageFromBase64(base64);
+  const rad = (degrees * Math.PI) / 180;
+  const swap = degrees % 180 !== 0;
+  const out = document.createElement('canvas');
+  out.width = swap ? img.height : img.width;
+  out.height = swap ? img.width : img.height;
+  const ctx = out.getContext('2d');
+  ctx.translate(out.width / 2, out.height / 2);
+  ctx.rotate(rad);
+  ctx.drawImage(img, -img.width / 2, -img.height / 2);
+  return canvasToJpegBase64(out, 0.92);
+}
+
+/** 縦長なら90°回して横長（名刺標準）にする */
+async function ensureLandscapeBase64(base64) {
+  const img = await loadImageFromBase64(base64);
+  if (img.width >= img.height) return base64;
+  return rotateBase64(base64, 90);
+}
+
+function captureFrameFromVideo() {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) {
+    throw new Error('カメラ映像がまだ準備できていません');
+  }
+
+  // 画面の向きに合わせてキャンバスへ描画（端末を横にした場合のズレを補正）
+  let angle = 0;
+  try {
+    const type = (screen.orientation && screen.orientation.type) || '';
+    if (type.indexOf('landscape-primary') !== -1) angle = 0;
+    else if (type.indexOf('landscape-secondary') !== -1) angle = 180;
+    else if (type.indexOf('portrait-secondary') !== -1) angle = 180;
+    // portrait-primary はそのまま（後で横長化）
+  } catch (e) {
+    // ignore
+  }
+
+  // video の実ピクセルはそのまま描画（CSS回転はしない）
+  canvas.width = vw;
+  canvas.height = vh;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, vw, vh);
+  return canvasToJpegBase64(canvas, 0.9);
+}
+
 function showCameraFor(side) {
   captureSide = side;
   captureLabel.textContent = side === 'back' ? '裏面を撮影' : '表面を撮影';
@@ -113,7 +182,15 @@ function showCameraFor(side) {
   btnCapture.textContent = side === 'back' ? '裏面を撮影する' : '表面を撮影する';
   btnCaptureBack.style.display = 'none';
   btnScan.style.display = 'none';
+  btnRotate.style.display = 'none';
   btnRetry.style.display = imageFront ? 'block' : 'none';
+  // 撮影中はプレビューを隠してシャッターを近くに
+  previewPair.classList.remove('show');
+  if (side === 'back' && imageFront) {
+    captureHint.classList.add('show');
+  } else {
+    captureHint.classList.remove('show');
+  }
   status.classList.remove('show');
   editForm.classList.remove('show');
 }
@@ -136,11 +213,16 @@ function updatePreviewVisibility() {
     previewBack.style.display = 'none';
     previewBackWrap.style.display = 'none';
   }
+
+  const hasAny = !!(imageFront || imageBack);
+  previewPair.classList.toggle('show', hasAny);
+  btnRotate.style.display = hasAny ? 'block' : 'none';
 }
 
 function showPostCaptureActions() {
   video.style.display = 'none';
   btnCapture.style.display = 'none';
+  captureHint.classList.remove('show');
   btnCaptureBack.style.display = imageBack ? 'none' : 'block';
   btnScan.style.display = 'block';
   btnRetry.style.display = 'block';
@@ -148,36 +230,66 @@ function showPostCaptureActions() {
 }
 
 // ===== 撮影 =====
-btnCapture.addEventListener('click', () => {
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0);
+btnCapture.addEventListener('click', async () => {
+  try {
+    let base64 = captureFrameFromVideo();
 
-  const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-  const base64 = dataUrl.split(',')[1];
+    // 名刺は横長が標準。縦撮りなら自動で横向きへ
+    const sideKey = captureSide === 'back' ? 'back' : 'front';
+    if (!skipAutoLandscape[sideKey]) {
+      base64 = await ensureLandscapeBase64(base64);
+    }
+    skipAutoLandscape[sideKey] = false;
 
-  if (captureSide === 'back') {
-    imageBack = base64;
-  } else {
-    imageFront = base64;
-    imageBack = '';
-    faceBox = null;
-    faceImage = '';
+    if (captureSide === 'back') {
+      imageBack = base64;
+      lastCapturedSide = 'back';
+    } else {
+      imageFront = base64;
+      imageBack = '';
+      lastCapturedSide = 'front';
+      faceBox = null;
+      faceImage = '';
+      skipAutoLandscape.back = false;
+    }
+
+    showPostCaptureActions();
+    if (captureSide === 'back') {
+      captureLabel.textContent = '表・裏 撮影済み';
+    } else {
+      captureLabel.textContent = '表面 撮影済み（裏面は任意）';
+    }
+  } catch (err) {
+    alert(err.message || String(err));
   }
+});
 
-  showPostCaptureActions();
-  if (captureSide === 'back') {
-    captureLabel.textContent = '表・裏 撮影済み';
-  } else {
-    captureLabel.textContent = '表面 撮影済み（裏面は任意）';
+// ===== 向きの手動修正（90°ずつ・直近に撮った面） =====
+btnRotate.addEventListener('click', async () => {
+  try {
+    const side = (lastCapturedSide === 'back' && imageBack) ? 'back'
+      : imageFront ? 'front'
+      : imageBack ? 'back' : null;
+    if (!side) return;
+
+    if (side === 'back') {
+      imageBack = await rotateBase64(imageBack, 90);
+      skipAutoLandscape.back = true;
+    } else {
+      imageFront = await rotateBase64(imageFront, 90);
+      skipAutoLandscape.front = true;
+      faceBox = null;
+      faceImage = '';
+    }
+    updatePreviewVisibility();
+  } catch (err) {
+    alert('回転に失敗しました: ' + err.message);
   }
 });
 
 // ===== 裏面撮影モードへ =====
 btnCaptureBack.addEventListener('click', () => {
-  // 表のプレビューは残しつつ、カメラで裏を撮る
-  updatePreviewVisibility();
+  // 表プレビューは隠してカメラ＋シャッターを前面に
   showCameraFor('back');
 });
 
@@ -187,8 +299,13 @@ function resetCamera() {
   imageBack = '';
   faceBox = null;
   faceImage = '';
+  skipAutoLandscape = { front: false, back: false };
   previewFront.style.display = 'none';
+  previewBack.style.display = 'none';
   previewBackWrap.style.display = 'none';
+  previewPair.classList.remove('show');
+  captureHint.classList.remove('show');
+  btnRotate.style.display = 'none';
   btnSave.style.display = 'none';
   editForm.classList.remove('show');
   status.classList.remove('show');
@@ -247,6 +364,14 @@ btnScan.addEventListener('click', async () => {
   loading.classList.add('show');
 
   try {
+    if (!skipAutoLandscape.front) {
+      imageFront = await ensureLandscapeBase64(imageFront);
+    }
+    if (imageBack && !skipAutoLandscape.back) {
+      imageBack = await ensureLandscapeBase64(imageBack);
+    }
+    updatePreviewVisibility();
+
     const payload = { action: 'scan', image: imageFront };
     if (imageBack) payload.imageBack = imageBack;
 
@@ -290,6 +415,13 @@ btnSave.addEventListener('click', async () => {
   loading.classList.add('show');
 
   try {
+    if (!skipAutoLandscape.front) {
+      imageFront = await ensureLandscapeBase64(imageFront);
+    }
+    if (imageBack && !skipAutoLandscape.back) {
+      imageBack = await ensureLandscapeBase64(imageBack);
+    }
+
     const payload = {
       action: 'save',
       data: cardData,

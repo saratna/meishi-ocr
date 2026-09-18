@@ -26,7 +26,7 @@
     .camera-area {
       width: 100%;
       max-width: 400px;
-      margin-bottom: 20px;
+      margin-bottom: 12px;
     }
     video, canvas {
       width: 100%;
@@ -44,11 +44,15 @@
       object-fit: contain;
     }
     .preview-pair {
-      display: flex;
+      display: none;
       gap: 8px;
       width: 100%;
-      margin-top: 10px;
+      max-width: 400px;
+      margin-top: 8px;
       margin-bottom: 10px;
+    }
+    .preview-pair.show {
+      display: flex;
     }
     .preview-pair > div {
       flex: 1;
@@ -62,6 +66,22 @@
       color: #888;
       margin-bottom: 4px;
     }
+    .capture-hint {
+      width: 100%;
+      max-width: 400px;
+      text-align: center;
+      font-size: 0.85rem;
+      color: #e6a817;
+      margin-bottom: 8px;
+      display: none;
+    }
+    .capture-hint.show { display: block; }
+    .btn-rotate {
+      background: #2a3f5f;
+      color: #e0e0e0;
+      display: none;
+    }
+    .btn-rotate:hover { background: #35507a; }
     .btn {
       width: 100%;
       max-width: 400px;
@@ -231,22 +251,26 @@
   <!-- スキャンタブ -->
   <div id="tab-scan" class="tab-content active">
     <div class="capture-label" id="captureLabel">表面を撮影</div>
+    <div class="capture-hint" id="captureHint">表は撮影済み。裏面を写して撮影してください</div>
     <div class="camera-area">
       <video id="video" autoplay playsinline></video>
       <canvas id="canvas"></canvas>
-      <div class="preview-pair">
-        <div style="flex:1">
-          <div class="preview-side-label">表</div>
-          <img id="previewFront" class="preview-img" alt="名刺・表">
-        </div>
-        <div id="previewBackWrap" style="flex:1; display:none">
-          <div class="preview-side-label">裏</div>
-          <img id="previewBack" class="preview-img" alt="名刺・裏">
-        </div>
-      </div>
     </div>
 
     <button id="btnCapture" class="btn btn-capture">表面を撮影する</button>
+
+    <div class="preview-pair" id="previewPair">
+      <div>
+        <div class="preview-side-label">表</div>
+        <img id="previewFront" class="preview-img" alt="名刺・表">
+      </div>
+      <div id="previewBackWrap" style="display:none">
+        <div class="preview-side-label">裏</div>
+        <img id="previewBack" class="preview-img" alt="名刺・裏">
+      </div>
+    </div>
+
+    <button id="btnRotate" class="btn btn-rotate">90°回転（向き修正）</button>
     <button id="btnCaptureBack" class="btn btn-back">裏面も撮る</button>
     <button id="btnScan" class="btn btn-scan">読み取り開始</button>
     <button id="btnRetry" class="btn btn-retry">撮り直す</button>
