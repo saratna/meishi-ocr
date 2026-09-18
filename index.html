@@ -82,6 +82,73 @@
       display: none;
     }
     .btn-rotate:hover { background: #35507a; }
+    .btn-crop {
+      background: #1f6f8b;
+      color: #fff;
+      display: none;
+    }
+    .btn-crop:hover { background: #185a70; }
+    .crop-tools {
+      width: 100%;
+      max-width: 400px;
+      display: none;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .crop-tools.show { display: flex; }
+    .crop-tools .btn {
+      flex: 1;
+      margin-bottom: 0;
+      padding: 12px 8px;
+      font-size: 0.95rem;
+    }
+
+    /* 切り取りエディタ */
+    .crop-editor {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: rgba(10, 12, 20, 0.96);
+      flex-direction: column;
+      align-items: center;
+      padding: 12px;
+      overflow: auto;
+    }
+    .crop-editor.show { display: flex; }
+    .crop-editor h2 {
+      color: #e94560;
+      font-size: 1.1rem;
+      margin-bottom: 6px;
+    }
+    .crop-editor .crop-help {
+      color: #aaa;
+      font-size: 0.85rem;
+      text-align: center;
+      margin-bottom: 10px;
+      line-height: 1.4;
+      max-width: 420px;
+    }
+    .crop-stage {
+      position: relative;
+      width: 100%;
+      max-width: 420px;
+      touch-action: none;
+      user-select: none;
+    }
+    .crop-stage canvas {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 8px;
+      background: #000;
+    }
+    .crop-actions {
+      width: 100%;
+      max-width: 420px;
+      margin-top: 12px;
+    }
+    .crop-actions .btn { display: block; }
     .btn {
       width: 100%;
       max-width: 400px;
@@ -271,6 +338,10 @@
     </div>
 
     <button id="btnRotate" class="btn btn-rotate">90°回転（向き修正）</button>
+    <div class="crop-tools" id="cropTools">
+      <button id="btnCropSquare" class="btn btn-crop" type="button">正方形で切る</button>
+      <button id="btnCropQuad" class="btn btn-crop" type="button">4点で切る</button>
+    </div>
     <button id="btnCaptureBack" class="btn btn-back">裏面も撮る</button>
     <button id="btnScan" class="btn btn-scan">読み取り開始</button>
     <button id="btnRetry" class="btn btn-retry">撮り直す</button>
@@ -314,6 +385,19 @@
   <p style="margin-top:24px;font-size:0.85rem;color:#666;text-align:center;">
     <a href="token-generator.html" style="color:#6cb6ff;">トークン生成</a>
   </p>
+
+  <!-- 切り取りエディタ -->
+  <div id="cropEditor" class="crop-editor" aria-hidden="true">
+    <h2 id="cropTitle">切り取り</h2>
+    <p class="crop-help" id="cropHelp"></p>
+    <div class="crop-stage">
+      <canvas id="cropCanvas"></canvas>
+    </div>
+    <div class="crop-actions">
+      <button id="btnCropApply" class="btn btn-save" type="button">この範囲で切り取る</button>
+      <button id="btnCropCancel" class="btn btn-retry" type="button" style="display:block">キャンセル</button>
+    </div>
+  </div>
 
   <!-- secrets.js は gitignore。無い場合は app.js が警告を出す -->
   <script src="secrets.js"></script>

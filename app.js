@@ -48,6 +48,15 @@ const btnCaptureBack = document.getElementById('btnCaptureBack');
 const btnScan = document.getElementById('btnScan');
 const btnRetry = document.getElementById('btnRetry');
 const btnRotate = document.getElementById('btnRotate');
+const btnCropSquare = document.getElementById('btnCropSquare');
+const btnCropQuad = document.getElementById('btnCropQuad');
+const cropTools = document.getElementById('cropTools');
+const cropEditor = document.getElementById('cropEditor');
+const cropCanvas = document.getElementById('cropCanvas');
+const cropTitle = document.getElementById('cropTitle');
+const cropHelp = document.getElementById('cropHelp');
+const btnCropApply = document.getElementById('btnCropApply');
+const btnCropCancel = document.getElementById('btnCropCancel');
 const btnSave = document.getElementById('btnSave');
 const btnCancel = document.getElementById('btnCancel');
 const loading = document.getElementById('loading');
@@ -217,6 +226,7 @@ function updatePreviewVisibility() {
   const hasAny = !!(imageFront || imageBack);
   previewPair.classList.toggle('show', hasAny);
   btnRotate.style.display = hasAny ? 'block' : 'none';
+  cropTools.classList.toggle('show', hasAny);
 }
 
 function showPostCaptureActions() {
@@ -306,6 +316,7 @@ function resetCamera() {
   previewPair.classList.remove('show');
   captureHint.classList.remove('show');
   btnRotate.style.display = 'none';
+  cropTools.classList.remove('show');
   btnSave.style.display = 'none';
   editForm.classList.remove('show');
   status.classList.remove('show');
@@ -314,6 +325,490 @@ function resetCamera() {
 
 btnRetry.addEventListener('click', resetCamera);
 btnCancel.addEventListener('click', resetCamera);
+
+// ===== 切り取りエディタ =====
+const cropState = {
+  mode: null, // 'square' | 'quad'
+  side: null,
+  img: null,
+  // 画像ピクセル座標
+  square: { x: 0, y: 0, size: 100 },
+  points: [], // [{x,y} x4] TL TR BR BL
+  drag: null, // { type, index, startX, startY, orig }
+  displayScale: 1
+};
+
+function getActiveCropSide() {
+  if (lastCapturedSide === 'back' && imageBack) return 'back';
+  if (imageFront) return 'front';
+  if (imageBack) return 'back';
+  return null;
+}
+
+function getActiveCropBase64() {
+  const side = getActiveCropSide();
+  if (side === 'back') return imageBack;
+  if (side === 'front') return imageFront;
+  return '';
+}
+
+function setActiveCropBase64(base64) {
+  const side = cropState.side || getActiveCropSide();
+  if (side === 'back') {
+    imageBack = base64;
+    skipAutoLandscape.back = true;
+  } else {
+    imageFront = base64;
+    skipAutoLandscape.front = true;
+    faceBox = null;
+    faceImage = '';
+  }
+}
+
+function clientToImageCoords(clientX, clientY) {
+  const rect = cropCanvas.getBoundingClientRect();
+  const x = ((clientX - rect.left) / rect.width) * cropState.img.width;
+  const y = ((clientY - rect.top) / rect.height) * cropState.img.height;
+  return {
+    x: Math.max(0, Math.min(cropState.img.width, x)),
+    y: Math.max(0, Math.min(cropState.img.height, y))
+  };
+}
+
+function drawCropEditor() {
+  const img = cropState.img;
+  if (!img) return;
+
+  const maxW = Math.min(420, window.innerWidth - 24);
+  const scale = maxW / img.width;
+  cropState.displayScale = scale;
+  cropCanvas.width = Math.round(img.width * scale);
+  cropCanvas.height = Math.round(img.height * scale);
+
+  const ctx = cropCanvas.getContext('2d');
+  ctx.clearRect(0, 0, cropCanvas.width, cropCanvas.height);
+  ctx.drawImage(img, 0, 0, cropCanvas.width, cropCanvas.height);
+
+  // 暗幕
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, 0, cropCanvas.width, cropCanvas.height);
+
+  const s = scale;
+  ctx.save();
+  ctx.beginPath();
+  if (cropState.mode === 'square') {
+    const { x, y, size } = cropState.square;
+    ctx.rect(x * s, y * s, size * s, size * s);
+  } else {
+    const pts = cropState.points;
+    ctx.moveTo(pts[0].x * s, pts[0].y * s);
+    for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x * s, pts[i].y * s);
+    ctx.closePath();
+  }
+  ctx.clip();
+  ctx.drawImage(img, 0, 0, cropCanvas.width, cropCanvas.height);
+  ctx.restore();
+
+  // 枠線
+  ctx.strokeStyle = '#e94560';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  if (cropState.mode === 'square') {
+    const { x, y, size } = cropState.square;
+    ctx.strokeRect(x * s, y * s, size * s, size * s);
+    // 四隅ハンドル
+    const handles = [
+      { x: x, y: y },
+      { x: x + size, y: y },
+      { x: x + size, y: y + size },
+      { x: x, y: y + size }
+    ];
+    handles.forEach(h => drawHandle(ctx, h.x * s, h.y * s));
+  } else {
+    const pts = cropState.points;
+    ctx.moveTo(pts[0].x * s, pts[0].y * s);
+    for (let i = 1; i < 4; i++) ctx.lineTo(pts[i].x * s, pts[i].y * s);
+    ctx.closePath();
+    ctx.stroke();
+    pts.forEach((p, i) => {
+      drawHandle(ctx, p.x * s, p.y * s);
+      ctx.fillStyle = '#fff';
+      ctx.font = '12px sans-serif';
+      ctx.fillText(String(i + 1), p.x * s + 10, p.y * s - 8);
+    });
+  }
+}
+
+function drawHandle(ctx, x, y) {
+  ctx.beginPath();
+  ctx.fillStyle = '#e94560';
+  ctx.strokeStyle = '#fff';
+  ctx.lineWidth = 2;
+  ctx.arc(x, y, 10, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+}
+
+function hitTestCrop(imgX, imgY) {
+  const thr = 24 / cropState.displayScale;
+  if (cropState.mode === 'square') {
+    const { x, y, size } = cropState.square;
+    const corners = [
+      { type: 'corner', index: 0, x: x, y: y },
+      { type: 'corner', index: 1, x: x + size, y: y },
+      { type: 'corner', index: 2, x: x + size, y: y + size },
+      { type: 'corner', index: 3, x: x, y: y + size }
+    ];
+    for (let i = 0; i < corners.length; i++) {
+      const c = corners[i];
+      if (Math.hypot(imgX - c.x, imgY - c.y) <= thr) return c;
+    }
+    if (imgX >= x && imgX <= x + size && imgY >= y && imgY <= y + size) {
+      return { type: 'move' };
+    }
+    return null;
+  }
+
+  for (let i = 0; i < cropState.points.length; i++) {
+    const p = cropState.points[i];
+    if (Math.hypot(imgX - p.x, imgY - p.y) <= thr) {
+      return { type: 'point', index: i };
+    }
+  }
+  return null;
+}
+
+function openCropEditor(mode) {
+  const side = getActiveCropSide();
+  const base64 = getActiveCropBase64();
+  if (!side || !base64) {
+    alert('先に名刺を撮影してください');
+    return;
+  }
+
+  loadImageFromBase64(base64).then(img => {
+    cropState.mode = mode;
+    cropState.side = side;
+    cropState.img = img;
+    cropState.drag = null;
+
+    const m = Math.min(img.width, img.height);
+    const size = Math.floor(m * 0.82);
+    cropState.square = {
+      x: Math.floor((img.width - size) / 2),
+      y: Math.floor((img.height - size) / 2),
+      size: size
+    };
+
+    const insetX = img.width * 0.08;
+    const insetY = img.height * 0.08;
+    cropState.points = [
+      { x: insetX, y: insetY },
+      { x: img.width - insetX, y: insetY },
+      { x: img.width - insetX, y: img.height - insetY },
+      { x: insetX, y: img.height - insetY }
+    ];
+
+    if (mode === 'square') {
+      cropTitle.textContent = '正方形で切り取り';
+      cropHelp.textContent = '枠をドラッグで移動、角をドラッグでサイズ変更。適用で真四角に切り出します。';
+    } else {
+      cropTitle.textContent = '4点で切り取り';
+      cropHelp.textContent = '名刺の四隅（左上→右上→右下→左下）をドラッグして合わせると、真四角に補正して切り出します。';
+    }
+
+    cropEditor.classList.add('show');
+    cropEditor.setAttribute('aria-hidden', 'false');
+    drawCropEditor();
+  }).catch(err => alert(err.message));
+}
+
+function closeCropEditor() {
+  cropEditor.classList.remove('show');
+  cropEditor.setAttribute('aria-hidden', 'true');
+  cropState.mode = null;
+  cropState.img = null;
+  cropState.drag = null;
+}
+
+function clampSquare() {
+  const img = cropState.img;
+  let { x, y, size } = cropState.square;
+  size = Math.max(40, Math.min(size, img.width, img.height));
+  x = Math.max(0, Math.min(x, img.width - size));
+  y = Math.max(0, Math.min(y, img.height - size));
+  cropState.square = { x, y, size };
+}
+
+/** 4点 → 正方形への透視変換 */
+function getPerspectiveTransform(src, dst) {
+  // src/dst: [{x,y} x4]
+  const A = [];
+  const b = [];
+  for (let i = 0; i < 4; i++) {
+    const s = src[i];
+    const d = dst[i];
+    A.push([s.x, s.y, 1, 0, 0, 0, -d.x * s.x, -d.x * s.y]);
+    b.push(d.x);
+    A.push([0, 0, 0, s.x, s.y, 1, -d.y * s.x, -d.y * s.y]);
+    b.push(d.y);
+  }
+  const h = solveGaussian(A, b);
+  return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];
+}
+
+function solveGaussian(Ain, bin) {
+  const n = bin.length;
+  const M = Ain.map((row, i) => row.slice().concat([bin[i]]));
+  for (let col = 0; col < n; col++) {
+    let pivot = col;
+    for (let r = col + 1; r < n; r++) {
+      if (Math.abs(M[r][col]) > Math.abs(M[pivot][col])) pivot = r;
+    }
+    if (Math.abs(M[pivot][col]) < 1e-10) {
+      throw new Error('変形計算に失敗しました。4点が一直線になっていないか確認してください');
+    }
+    if (pivot !== col) {
+      const t = M[col];
+      M[col] = M[pivot];
+      M[pivot] = t;
+    }
+    const piv = M[col][col];
+    for (let c = col; c <= n; c++) M[col][c] /= piv;
+    for (let r = 0; r < n; r++) {
+      if (r === col) continue;
+      const f = M[r][col];
+      for (let c = col; c <= n; c++) M[r][c] -= f * M[col][c];
+    }
+  }
+  return M.map(row => row[n]);
+}
+
+function invertHomography(h) {
+  // 3x3 matrix inverse
+  const a = h[0], b = h[1], c = h[2];
+  const d = h[3], e = h[4], f = h[5];
+  const g = h[6], hh = h[7], i = h[8];
+  const A = e * i - f * hh;
+  const B = f * g - d * i;
+  const C = d * hh - e * g;
+  const D = c * hh - b * i;
+  const E = a * i - c * g;
+  const F = b * g - a * hh;
+  const G = b * f - c * e;
+  const H = c * d - a * f;
+  const I = a * e - b * d;
+  const det = a * A + b * B + c * C;
+  if (Math.abs(det) < 1e-12) throw new Error('変形が不正です');
+  return [
+    A / det, D / det, G / det,
+    B / det, E / det, H / det,
+    C / det, F / det, I / det
+  ];
+}
+
+function applyHomography(h, x, y) {
+  const w = h[6] * x + h[7] * y + h[8];
+  return {
+    x: (h[0] * x + h[1] * y + h[2]) / w,
+    y: (h[3] * x + h[4] * y + h[5]) / w
+  };
+}
+
+function sampleBilinear(data, width, height, x, y) {
+  if (x < 0 || y < 0 || x >= width - 1 || y >= height - 1) {
+    return [0, 0, 0, 255];
+  }
+  const x0 = Math.floor(x);
+  const y0 = Math.floor(y);
+  const x1 = x0 + 1;
+  const y1 = y0 + 1;
+  const fx = x - x0;
+  const fy = y - y0;
+  const idx = (yy, xx) => (yy * width + xx) * 4;
+  const i00 = idx(y0, x0);
+  const i10 = idx(y0, x1);
+  const i01 = idx(y1, x0);
+  const i11 = idx(y1, x1);
+  const out = [];
+  for (let c = 0; c < 4; c++) {
+    const v =
+      data[i00 + c] * (1 - fx) * (1 - fy) +
+      data[i10 + c] * fx * (1 - fy) +
+      data[i01 + c] * (1 - fx) * fy +
+      data[i11 + c] * fx * fy;
+    out.push(v);
+  }
+  return out;
+}
+
+async function warpQuadToSquare(base64, points) {
+  const img = await loadImageFromBase64(base64);
+  const srcCanvas = document.createElement('canvas');
+  srcCanvas.width = img.width;
+  srcCanvas.height = img.height;
+  const sctx = srcCanvas.getContext('2d');
+  sctx.drawImage(img, 0, 0);
+  const srcData = sctx.getImageData(0, 0, img.width, img.height);
+
+  // 出力サイズ：辺の平均長
+  const edgeLens = [
+    Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y),
+    Math.hypot(points[2].x - points[1].x, points[2].y - points[1].y),
+    Math.hypot(points[3].x - points[2].x, points[3].y - points[2].y),
+    Math.hypot(points[0].x - points[3].x, points[0].y - points[3].y)
+  ];
+  const outSize = Math.max(256, Math.min(1600, Math.round(edgeLens.reduce((a, b) => a + b, 0) / 4)));
+
+  const dst = [
+    { x: 0, y: 0 },
+    { x: outSize - 1, y: 0 },
+    { x: outSize - 1, y: outSize - 1 },
+    { x: 0, y: outSize - 1 }
+  ];
+
+  // dest -> src の逆変換用（出力各画素から入力を引く）
+  const hFwd = getPerspectiveTransform(points, dst);
+  const hInv = invertHomography(hFwd);
+
+  const outCanvas = document.createElement('canvas');
+  outCanvas.width = outSize;
+  outCanvas.height = outSize;
+  const octx = outCanvas.getContext('2d');
+  const outImg = octx.createImageData(outSize, outSize);
+  const out = outImg.data;
+
+  for (let y = 0; y < outSize; y++) {
+    for (let x = 0; x < outSize; x++) {
+      const src = applyHomography(hInv, x, y);
+      const rgba = sampleBilinear(srcData.data, img.width, img.height, src.x, src.y);
+      const i = (y * outSize + x) * 4;
+      out[i] = rgba[0];
+      out[i + 1] = rgba[1];
+      out[i + 2] = rgba[2];
+      out[i + 3] = 255;
+    }
+  }
+  octx.putImageData(outImg, 0, 0);
+  return canvasToJpegBase64(outCanvas, 0.92);
+}
+
+async function cropSquareRegion(base64, square) {
+  const img = await loadImageFromBase64(base64);
+  const { x, y, size } = square;
+  const out = document.createElement('canvas');
+  out.width = size;
+  out.height = size;
+  const ctx = out.getContext('2d');
+  ctx.drawImage(img, x, y, size, size, 0, 0, size, size);
+  return canvasToJpegBase64(out, 0.92);
+}
+
+function onCropPointerDown(e) {
+  if (!cropState.img) return;
+  e.preventDefault();
+  const t = e.touches ? e.touches[0] : e;
+  const pt = clientToImageCoords(t.clientX, t.clientY);
+  const hit = hitTestCrop(pt.x, pt.y);
+  if (!hit) return;
+  cropState.drag = {
+    type: hit.type,
+    index: hit.index,
+    start: pt,
+    origSquare: Object.assign({}, cropState.square),
+    origPoints: cropState.points.map(p => ({ x: p.x, y: p.y }))
+  };
+}
+
+function onCropPointerMove(e) {
+  if (!cropState.drag || !cropState.img) return;
+  e.preventDefault();
+  const t = e.touches ? e.touches[0] : e;
+  const pt = clientToImageCoords(t.clientX, t.clientY);
+  const dx = pt.x - cropState.drag.start.x;
+  const dy = pt.y - cropState.drag.start.y;
+
+  if (cropState.mode === 'square') {
+    const o = cropState.drag.origSquare;
+    if (cropState.drag.type === 'move') {
+      cropState.square.x = o.x + dx;
+      cropState.square.y = o.y + dy;
+      clampSquare();
+    } else if (cropState.drag.type === 'corner') {
+      const idx = cropState.drag.index;
+      // 対角を固定してサイズ変更
+      const fixed = [
+        { x: o.x + o.size, y: o.y + o.size },
+        { x: o.x, y: o.y + o.size },
+        { x: o.x, y: o.y },
+        { x: o.x + o.size, y: o.y }
+      ][idx];
+      const size = Math.max(40, Math.max(Math.abs(pt.x - fixed.x), Math.abs(pt.y - fixed.y)));
+      cropState.square.size = size;
+      cropState.square.x = Math.min(fixed.x, fixed.x - (pt.x < fixed.x ? size : 0) + (pt.x >= fixed.x ? 0 : 0));
+      // simpler corner resize from fixed opposite corner
+      if (idx === 0) {
+        cropState.square.x = fixed.x - size;
+        cropState.square.y = fixed.y - size;
+      } else if (idx === 1) {
+        cropState.square.x = fixed.x;
+        cropState.square.y = fixed.y - size;
+      } else if (idx === 2) {
+        cropState.square.x = fixed.x;
+        cropState.square.y = fixed.y;
+      } else {
+        cropState.square.x = fixed.x - size;
+        cropState.square.y = fixed.y;
+      }
+      cropState.square.size = size;
+      clampSquare();
+    }
+  } else if (cropState.drag.type === 'point') {
+    cropState.points[cropState.drag.index] = { x: pt.x, y: pt.y };
+  }
+  drawCropEditor();
+}
+
+function onCropPointerUp(e) {
+  if (e) e.preventDefault();
+  cropState.drag = null;
+}
+
+cropCanvas.addEventListener('mousedown', onCropPointerDown);
+window.addEventListener('mousemove', onCropPointerMove);
+window.addEventListener('mouseup', onCropPointerUp);
+cropCanvas.addEventListener('touchstart', onCropPointerDown, { passive: false });
+window.addEventListener('touchmove', onCropPointerMove, { passive: false });
+window.addEventListener('touchend', onCropPointerUp);
+
+btnCropSquare.addEventListener('click', () => openCropEditor('square'));
+btnCropQuad.addEventListener('click', () => openCropEditor('quad'));
+
+btnCropCancel.addEventListener('click', closeCropEditor);
+
+btnCropApply.addEventListener('click', async () => {
+  try {
+    btnCropApply.disabled = true;
+    btnCropApply.textContent = '処理中...';
+    const base64 = cropState.side === 'back' ? imageBack : imageFront;
+    let next;
+    if (cropState.mode === 'square') {
+      clampSquare();
+      next = await cropSquareRegion(base64, cropState.square);
+    } else {
+      next = await warpQuadToSquare(base64, cropState.points);
+    }
+    setActiveCropBase64(next);
+    closeCropEditor();
+    updatePreviewVisibility();
+    captureLabel.textContent = '切り取りを反映しました';
+  } catch (err) {
+    alert('切り取りに失敗しました: ' + (err.message || err));
+  } finally {
+    btnCropApply.disabled = false;
+    btnCropApply.textContent = 'この範囲で切り取る';
+  }
+});
 
 // ===== 顔くり抜き（Visionの座標をフロントでクロップ） =====
 function cropFaceFromFront(box) {
