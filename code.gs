@@ -69,15 +69,23 @@ function handleScan(imageFront, imageBack) {
 
 // ===== 保存のみ（編集後のデータを書き込み） =====
 function handleSave(cardData, imageFront, imageBack, faceImage) {
-  if (imageFront) {
-    const frontInfo = saveImageToDrive(imageFront, cardData, 'front');
-    cardData.frontImageUrl = frontInfo.driveUrl;
-    cardData.frontFilename = frontInfo.filename;
-  }
-  if (imageBack) {
-    const backInfo = saveImageToDrive(imageBack, cardData, 'back');
-    cardData.backImageUrl = backInfo.driveUrl;
-    cardData.backFilename = backInfo.filename;
+  var driveNotes = [];
+
+  try {
+    if (imageFront) {
+      const frontInfo = saveImageToDrive(imageFront, cardData, 'front');
+      cardData.frontImageUrl = frontInfo.driveUrl;
+      cardData.frontFilename = frontInfo.filename;
+    }
+    if (imageBack) {
+      const backInfo = saveImageToDrive(imageBack, cardData, 'back');
+      cardData.backImageUrl = backInfo.driveUrl;
+      cardData.backFilename = backInfo.filename;
+    }
+  } catch (driveErr) {
+    // Drive権限未承認でも Sheets / 連絡先は続行する
+    driveNotes.push('Drive保存スキップ: ' + driveErr.toString());
+    Logger.log(driveNotes[driveNotes.length - 1]);
   }
 
   writeToSheet(cardData);
@@ -103,6 +111,15 @@ function handleSave(cardData, imageFront, imageBack, faceImage) {
     }
   } catch (e) {
     cardData.contactStatus = '連絡先同期エラー: ' + e.toString();
+  }
+
+  if (driveNotes.length > 0) {
+    cardData.driveStatus = driveNotes.join(' / ');
+    if (cardData.contactStatus) {
+      cardData.contactStatus = cardData.contactStatus + ' / ' + cardData.driveStatus;
+    } else {
+      cardData.contactStatus = cardData.driveStatus;
+    }
   }
 
   return jsonResponse({ status: 'success', data: cardData });
@@ -374,6 +391,10 @@ function detectFaceBox(imageBase64) {
 
 // ===== Drive に名刺画像保存 =====
 function saveImageToDrive(imageBase64, cardData, side) {
+  if (!CONFIG.DRIVE_FOLDER_ID || CONFIG.DRIVE_FOLDER_ID === 'YOUR_DRIVE_FOLDER_ID') {
+    throw new Error('DRIVE_FOLDER_ID が未設定です。DriveフォルダIDを CONFIG に入れてください。');
+  }
+
   const now = new Date();
   const stamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
   const nameSafe = String(cardData.name || 'meishi')
@@ -389,7 +410,12 @@ function saveImageToDrive(imageBase64, cardData, side) {
 
   const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
   const file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (shareErr) {
+    // 共有設定に失敗してもファイル自体は保存できている
+    Logger.log('Drive共有設定スキップ: ' + shareErr.toString());
+  }
 
   return {
     filename: filename,
@@ -435,15 +461,32 @@ function jsonResponse(obj) {
 }
 
 // ===== テスト =====
+// Apps Script エディタで testSetup を実行し、Drive権限の承認ダイアログが出たら許可する
 function testSetup() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
   Logger.log('シート接続OK: ' + sheet.getName());
   Logger.log('現在の行数: ' + sheet.getLastRow());
-  if (CONFIG.DRIVE_FOLDER_ID && CONFIG.DRIVE_FOLDER_ID !== 'YOUR_DRIVE_FOLDER_ID') {
-    const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
-    Logger.log('DriveフォルダOK: ' + folder.getName());
+
+  if (!CONFIG.DRIVE_FOLDER_ID || CONFIG.DRIVE_FOLDER_ID === 'YOUR_DRIVE_FOLDER_ID') {
+    Logger.log('DRIVE_FOLDER_ID が未設定です');
+    return;
   }
+
+  try {
+    const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+    Logger.log('DriveフォルダOK: ' + folder.getName() + ' / id=' + folder.getId());
+  } catch (e) {
+    Logger.log('Drive接続エラー: ' + e.toString());
+    Logger.log('対処: この関数を再実行して権限を承認するか、フォルダIDが自分のDriveのものか確認');
+    throw e;
+  }
+}
+
+// Drive権限だけ先に承認したいとき用（エディタで実行）
+function authorizeDrive() {
+  const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+  Logger.log('Drive権限OK: ' + folder.getName());
 }
 
 // ===== Geminiモデル確認（Apps Scriptでこの関数を実行） =====
