@@ -484,9 +484,24 @@ function testSetup() {
 }
 
 // Drive権限だけ先に承認したいとき用（エディタで実行）
+// createFile まで実行して Drive 書き込み権限を要求する
 function authorizeDrive() {
+  if (!CONFIG.DRIVE_FOLDER_ID || CONFIG.DRIVE_FOLDER_ID === 'YOUR_DRIVE_FOLDER_ID') {
+    throw new Error('先に CONFIG.DRIVE_FOLDER_ID を正しいフォルダIDに設定してください');
+  }
+
   const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
-  Logger.log('Drive権限OK: ' + folder.getName());
+  Logger.log('フォルダOK: ' + folder.getName());
+
+  const blob = Utilities.newBlob(
+    'meishi-ocr drive auth ok ' + new Date().toISOString(),
+    'text/plain',
+    'meishi-ocr-auth-test.txt'
+  );
+  const file = folder.createFile(blob);
+  Logger.log('createFile OK: ' + file.getUrl());
+  file.setTrashed(true);
+  Logger.log('Drive書き込み権限の承認が完了しました。ウェブアプリを新バージョンで再デプロイしてください。');
 }
 
 // ===== Geminiモデル確認（Apps Scriptでこの関数を実行） =====

@@ -23,7 +23,15 @@ async function gasFetch(payload) {
     body: JSON.stringify(Object.assign({ token: API_TOKEN }, payload)),
     redirect: 'follow'
   });
-  return response.json();
+
+  const text = await response.text();
+  let result;
+  try {
+    result = JSON.parse(text);
+  } catch (e) {
+    throw new Error('GAS応答がJSONではありません: ' + text.substring(0, 200));
+  }
+  return result;
 }
 
 // ===== 要素取得 =====

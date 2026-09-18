@@ -1,0 +1,34 @@
+/*
+  Apps Script エディタで:
+  プロジェクトの設定 → 「appsscript.json」マニフェストファイルをエディタで表示する
+  をONにして、中身をこれに合わせてください（既存の timeZone 等は残してOK）。
+
+  特に Drive 書き込みには auth/drive が必要です。
+  変更後は authorizeDrive を実行して権限承認 → 新バージョンで再デプロイ。
+*/
+{
+  "timeZone": "Asia/Tokyo",
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "People",
+        "version": "v1",
+        "serviceId": "peopleapi"
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "webapp": {
+    "executeAs": "USER_DEPLOYING",
+    "access": "ANYONE_ANONYMOUS"
+  },
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/drive",
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/contacts",
+    "https://www.googleapis.com/auth/userinfo.email",
+    "https://www.googleapis.com/auth/script.scriptapp"
+  ]
+}
