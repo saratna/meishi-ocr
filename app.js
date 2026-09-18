@@ -130,17 +130,21 @@ function stopCameraTracks() {
 }
 
 async function startCamera() {
-  btnCapture.disabled = true;
+  // disabled にするとクリック自体が消えるので使わない
+  btnCapture.disabled = false;
   btnCapture.textContent = 'カメラ起動中...';
   captureLabel.textContent = 'カメラ許可が出たら「許可」を押してください';
 
   var safety = setTimeout(function () {
-    if (btnCapture.disabled && String(btnCapture.textContent).indexOf('起動中') !== -1) {
-      btnCapture.disabled = false;
+    btnCapture.disabled = false;
+    if (!video.srcObject) {
       btnCapture.textContent = 'カメラを再試行';
       captureLabel.textContent = '起動が遅れています。再試行を押してください';
+    } else {
+      btnCapture.textContent = captureSide === 'back' ? '裏面を撮影する' : '表面を撮影する';
+      captureLabel.textContent = 'カメラ準備完了（撮影できます）';
     }
-  }, 20000);
+  }, 8000);
 
   try {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -179,15 +183,18 @@ async function startCamera() {
     video.setAttribute('webkit-playsinline', 'true');
     video.setAttribute('autoplay', 'true');
 
-    // play() が返らない端末があるので最大2秒で打ち切り
-    captureLabel.textContent = 'カメラ映像を開始しています...';
+    // ストリームが付いた瞬間に撮影可能にする（ここが重要）
+    btnCapture.disabled = false;
+    btnCapture.textContent = captureSide === 'back' ? '裏面を撮影する' : '表面を撮影する';
+    captureLabel.textContent = 'カメラ映像を開始しています（撮影可能）';
+
     await Promise.race([
       video.play().catch(function () { return null; }),
-      sleep(2000)
+      sleep(1500)
     ]);
 
     try {
-      await waitForVideoReady(5000);
+      await waitForVideoReady(4000);
       captureLabel.textContent = captureSide === 'back' ? '裏面を撮影' : '表面を撮影（準備完了）';
     } catch (readyErr) {
       captureLabel.textContent = '映像準備中でも撮影できます';
@@ -200,9 +207,10 @@ async function startCamera() {
     btnCapture.textContent = 'カメラを再試行';
     captureLabel.textContent = 'カメラを起動できませんでした';
     alert('カメラを起動できませんでした: ' + (err && err.message ? err.message : String(err)) +
-      '\\n\\n・HTTPSで開いているか\\n・カメラを「許可」したか\\n・他アプリがカメラ使用中でないか\\nを確認してください。');
+      '\n\n・HTTPSで開いているか\n・カメラを「許可」したか\n・他アプリがカメラ使用中でないか\nを確認してください。');
   } finally {
     clearTimeout(safety);
+    btnCapture.disabled = false;
   }
 }
 
@@ -416,34 +424,41 @@ function showPostCaptureActions() {
 }
 
 // ===== 撮影 =====
-btnCapture.addEventListener('click', async () => {
-  const label = String(btnCapture.textContent || '');
+let captureBusy = false;
+let lastShotAt = 0;
 
-  // 明示的に再試行のときだけ起動し直す（通常の撮影と混ぜない）
+async function takePhoto(ev) {
+  if (ev) {
+    try { ev.preventDefault(); } catch (e) { /* ignore */ }
+  }
+
+  captureLabel.textContent = 'シャッター反応あり...';
+
+  const label = String(btnCapture.textContent || '');
   if (label.indexOf('再試行') !== -1 || !video.srcObject) {
     await startCamera();
     return;
   }
 
-  if (btnCapture.dataset.busy === '1') return;
-  btnCapture.dataset.busy = '1';
-  btnCapture.disabled = true;
-  const prevLabel = label || '表面を撮影する';
+  if (captureBusy) return;
+  if (Date.now() - lastShotAt < 900) return;
+  lastShotAt = Date.now();
+  captureBusy = true;
+  btnCapture.disabled = false; // 無効化しない（反応なし防止）
+  const prevLabel = (label.indexOf('撮影する') !== -1) ? label : '表面を撮影する';
   btnCapture.textContent = '撮影中...';
   captureLabel.textContent = '撮影しています...';
 
   try {
-    // play() はハングすることがあるので待たない（最大1秒だけ試す）
     if (!video.videoWidth || !video.videoHeight) {
       await Promise.race([
         video.play().catch(function () { return null; }),
-        sleep(1000)
+        sleep(800)
       ]);
     }
 
     let base64 = await captureFrameFromVideo();
 
-    // 名刺は横長が標準。縦撮りなら自動で横向きへ
     const sideKey = captureSide === 'back' ? 'back' : 'front';
     if (!skipAutoLandscape[sideKey]) {
       base64 = await ensureLandscapeBase64(base64);
@@ -468,14 +483,27 @@ btnCapture.addEventListener('click', async () => {
       : '表面 撮影済み（裏面は任意）';
   } catch (err) {
     console.error(err);
-    captureLabel.textContent = '撮影に失敗: ' + (err && err.message ? err.message : String(err));
-    alert('撮影に失敗しました: ' + (err && err.message ? err.message : String(err)));
+    const msg = (err && err.message) ? err.message : String(err);
+    captureLabel.textContent = '撮影に失敗: ' + msg;
+    alert('撮影に失敗しました: ' + msg);
     btnCapture.style.display = 'block';
     btnCapture.textContent = prevLabel;
   } finally {
+    captureBusy = false;
     btnCapture.disabled = false;
-    btnCapture.dataset.busy = '0';
   }
+}
+
+// クリックが届かない端末向けに複数イベントで受ける
+window.takeMeishiPhoto = takePhoto;
+['click', 'pointerup', 'touchend'].forEach(function (evtName) {
+  btnCapture.addEventListener(evtName, function (ev) {
+    // touchend の後に click が二重発火しないよう touch では prevent
+    if (evtName === 'touchend') {
+      try { ev.preventDefault(); } catch (e) { /* ignore */ }
+    }
+    takePhoto(ev);
+  }, { passive: false });
 });
 
 // ===== 向きの手動修正（90°ずつ・直近に撮った面） =====

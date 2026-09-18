@@ -335,7 +335,7 @@ video {
       <canvas id="canvas"></canvas>
     </div>
 
-    <button id="btnCapture" class="btn btn-capture">表面を撮影する</button>
+    <button id="btnCapture" class="btn btn-capture" type="button" onclick="window.takeMeishiPhoto && window.takeMeishiPhoto(event)">表面を撮影する</button>
 
     <div class="preview-pair" id="previewPair">
       <div>
@@ -411,7 +411,7 @@ video {
   </div>
 
   <!-- secrets.js は gitignore。無い場合は app.js が警告を出す -->
-  <script src="secrets.js"></script>
-  <script src="app.js"></script>
+  <script src="secrets.js?v=20260318e"></script>
+  <script src="app.js?v=20260318e"></script>
 </body>
 </html>
