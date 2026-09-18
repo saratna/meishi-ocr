@@ -2,20 +2,34 @@
 const CONFIG = {
   VISION_API_KEY: 'YOUR_API_KEY',
   GEMINI_API_KEY: 'YOUR_API_KEY',
+  // まず使うモデル（混雑時は下の候補へ自動切替）
+  GEMINI_MODEL: 'gemini-3.5-flash',
+  GEMINI_MODEL_FALLBACKS: [
+    'gemini-3.5-flash-lite',
+    'gemini-3.1-flash-lite',
+    'gemini-flash-latest'
+  ],
   SPREADSHEET_ID: 'YOUR_SPREADSHEET_URL',
-  SHEET_NAME: '名刺DB'
+  SHEET_NAME: '名刺DB',
+  DRIVE_FOLDER_ID: 'YOUR_DRIVE_FOLDER_ID',
+  // フロントの secrets.js と同じ長いランダム文字列にする（GitHub に実値を上げない）
+  API_TOKEN: 'YOUR_API_TOKEN'
 };
 
 // ===== リクエスト受信 =====
 function doPost(e) {
   try {
     const data = JSON.parse(e.postData.contents);
+    if (!isValidToken(data.token)) {
+      return jsonResponse({ status: 'error', message: 'Unauthorized' });
+    }
+
     const action = data.action || 'scan_and_save';
 
     if (action === 'scan') {
-      return handleScan(data.image);
+      return handleScan(data.image, data.imageBack);
     } else if (action === 'save') {
-      return handleSave(data.data);
+      return handleSave(data.data, data.image, data.imageBack, data.faceImage);
     } else if (action === 'search') {
       return handleSearch(data.query);
     } else {
@@ -28,41 +42,76 @@ function doPost(e) {
 }
 
 function doGet(e) {
+  // 生存確認のみ（データ操作なし）。トークン不要。
   return jsonResponse({ status: 'ok' });
 }
 
+function isValidToken(token) {
+  const expected = CONFIG.API_TOKEN;
+  if (!expected || expected === 'YOUR_API_TOKEN') {
+    return false;
+  }
+  return token === expected;
+}
+
 // ===== スキャンのみ（編集用にデータを返す） =====
-function handleScan(imageBase64) {
-  const ocrText = callVisionAPI(imageBase64);
-  const cardData = callGeminiAPI(imageBase64, ocrText);
-  return jsonResponse({ status: 'success', data: cardData });
+function handleScan(imageFront, imageBack) {
+  const frontOcr = callVisionAPI(imageFront);
+  const backOcr = imageBack ? callVisionAPI(imageBack) : '';
+  const cardData = callGeminiAPI(imageFront, frontOcr, imageBack, backOcr);
+  const faceBox = detectFaceBox(imageFront);
+  return jsonResponse({
+    status: 'success',
+    data: cardData,
+    faceBox: faceBox
+  });
 }
 
 // ===== 保存のみ（編集後のデータを書き込み） =====
-function handleSave(cardData) {
+function handleSave(cardData, imageFront, imageBack, faceImage) {
+  if (imageFront) {
+    const frontInfo = saveImageToDrive(imageFront, cardData, 'front');
+    cardData.frontImageUrl = frontInfo.driveUrl;
+    cardData.frontFilename = frontInfo.filename;
+  }
+  if (imageBack) {
+    const backInfo = saveImageToDrive(imageBack, cardData, 'back');
+    cardData.backImageUrl = backInfo.driveUrl;
+    cardData.backFilename = backInfo.filename;
+  }
+
   writeToSheet(cardData);
-  
-  // Google連絡先にも同期
+
+  // Google連絡先にも同期（顔写真＋名刺表）
   try {
     const existing = findContact(cardData.name);
+    var person = null;
     if (existing) {
-      updateContact(existing, cardData);
+      person = updateContact(existing, cardData);
       cardData.contactStatus = '連絡先を更新しました';
     } else {
-      createContact(cardData);
+      person = createContact(cardData);
       cardData.contactStatus = '連絡先に新規登録しました';
+    }
+
+    const resourceName = (person && person.resourceName)
+      ? person.resourceName
+      : (existing && existing.resourceName);
+
+    if (resourceName) {
+      applyContactPhotos(resourceName, faceImage, imageFront);
     }
   } catch (e) {
     cardData.contactStatus = '連絡先同期エラー: ' + e.toString();
   }
-  
+
   return jsonResponse({ status: 'success', data: cardData });
 }
 
 // ===== スキャン＋保存（旧互換） =====
 function handleScanAndSave(imageBase64) {
   const ocrText = callVisionAPI(imageBase64);
-  const cardData = callGeminiAPI(imageBase64, ocrText);
+  const cardData = callGeminiAPI(imageBase64, ocrText, '', '');
   writeToSheet(cardData);
   return jsonResponse({ status: 'success', data: cardData });
 }
@@ -77,7 +126,7 @@ function handleSearch(query) {
     return jsonResponse({ status: 'success', data: [] });
   }
 
-  const dataRange = sheet.getRange(2, 1, lastRow - 1, 15).getValues();
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, 17).getValues();
   const queryLower = query.toLowerCase();
 
   const results = dataRange
@@ -109,7 +158,9 @@ function handleSearch(query) {
       email2: row[11],
       address: row[12],
       website: row[13],
-      memo: row[14]
+      memo: row[14],
+      frontImageUrl: row[15] || '',
+      backImageUrl: row[16] || ''
     }));
 
   return jsonResponse({ status: 'success', data: results });
@@ -140,16 +191,81 @@ function callVisionAPI(imageBase64) {
   return '';
 }
 
-// ===== Gemini API =====
-function callGeminiAPI(imageBase64, ocrText) {
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + CONFIG.GEMINI_API_KEY;
+// ===== Gemini API（モデル自動フォールバック付き） =====
+function geminiUrl(modelName) {
+  return 'https://generativelanguage.googleapis.com/v1beta/models/' +
+    modelName + ':generateContent?key=' + CONFIG.GEMINI_API_KEY;
+}
+
+function isRetryableGeminiError(code, body) {
+  if (code === 429 || code === 503 || code === 500) return true;
+  const textBody = String(body || '').toLowerCase();
+  return textBody.indexOf('high demand') !== -1 ||
+    textBody.indexOf('resource_exhausted') !== -1 ||
+    textBody.indexOf('unavailable') !== -1 ||
+    textBody.indexOf('overloaded') !== -1 ||
+    textBody.indexOf('try again') !== -1;
+}
+
+function geminiFetch(requestBody) {
+  const models = [CONFIG.GEMINI_MODEL]
+    .concat(CONFIG.GEMINI_MODEL_FALLBACKS || [])
+    .filter(function (m, i, arr) { return m && arr.indexOf(m) === i; });
+
+  var lastError = '';
+
+  for (var mi = 0; mi < models.length; mi++) {
+    var modelName = models[mi];
+    for (var attempt = 1; attempt <= 3; attempt++) {
+      var response = UrlFetchApp.fetch(geminiUrl(modelName), {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(requestBody),
+        muteHttpExceptions: true
+      });
+      var code = response.getResponseCode();
+      var body = response.getContentText();
+
+      if (code >= 200 && code < 300) {
+        return JSON.parse(body);
+      }
+
+      lastError = 'HTTP ' + code + ' / モデル=' + modelName + ' / ' + body.substring(0, 250);
+
+      if (isRetryableGeminiError(code, body)) {
+        Utilities.sleep(1500 * attempt);
+        continue;
+      }
+
+      // 404などリトライ不可 → 次のモデルへ
+      break;
+    }
+  }
+
+  throw new Error('Geminiエラー（混雑またはモデル不可）: ' + lastError);
+}
+
+function callGeminiAPI(imageFront, frontOcr, imageBack, backOcr) {
+  var sideNote = '';
+  if (imageBack && backOcr) {
+    sideNote = `
+【裏面OCRテキスト】
+${backOcr}
+
+表で足りない項目（住所・メール・電話・部門など）は裏面から補完してください。
+表と裏で矛盾する場合は表を優先し、裏にしかない情報を追加してください。`;
+  } else if (imageBack) {
+    sideNote = `
+裏面画像も添付しています。表で足りない項目は裏面から補完してください。`;
+  }
 
   const prompt = `あなたは名刺データ抽出の専門家です。
 以下のOCRテキストと名刺画像から、正確に情報を抽出してください。
 OCRの読み取りミスがあれば文脈から補正してください。
+${sideNote}
 
-【OCRテキスト】
-${ocrText}
+【表面OCRテキスト】
+${frontOcr}
 
 【出力形式】必ず以下のJSON形式のみで返してください。余計な説明は不要です。
 {
@@ -172,34 +288,114 @@ ${ocrText}
 該当情報がない項目は空文字にしてください。
 ふりがなは名刺に記載がなくても、漢字氏名から推測してひらがなで記入してください。`;
 
+  const parts = [
+    { text: prompt },
+    {
+      inline_data: {
+        mime_type: 'image/jpeg',
+        data: imageFront
+      }
+    }
+  ];
+
+  if (imageBack) {
+    parts.push({ text: '【裏面画像】' });
+    parts.push({
+      inline_data: {
+        mime_type: 'image/jpeg',
+        data: imageBack
+      }
+    });
+  }
+
   const requestBody = {
-    contents: [{
-      parts: [
-        { text: prompt },
-        {
-          inline_data: {
-            mime_type: 'image/jpeg',
-            data: imageBase64
-          }
-        }
-      ]
-    }],
+    contents: [{ parts: parts }],
     generationConfig: {
       temperature: 0.1,
       responseMimeType: 'application/json'
     }
   };
 
-  const response = UrlFetchApp.fetch(url, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(requestBody)
-  });
+  const result = geminiFetch(requestBody);
+  const outText = result.candidates[0].content.parts[0].text;
+  return JSON.parse(outText);
+}
 
-  const result = JSON.parse(response.getContentText());
-  const text = result.candidates[0].content.parts[0].text;
+// ===== 顔検出（Vision FACE_DETECTION） =====
+function detectFaceBox(imageBase64) {
+  try {
+    const url = 'https://vision.googleapis.com/v1/images:annotate?key=' + CONFIG.VISION_API_KEY;
+    const requestBody = {
+      requests: [{
+        image: { content: imageBase64 },
+        features: [{ type: 'FACE_DETECTION', maxResults: 3 }]
+      }]
+    };
 
-  return JSON.parse(text);
+    const response = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(requestBody),
+      muteHttpExceptions: true
+    });
+
+    if (response.getResponseCode() < 200 || response.getResponseCode() >= 300) {
+      return null;
+    }
+
+    const result = JSON.parse(response.getContentText());
+    const faces = result.responses && result.responses[0] && result.responses[0].faceAnnotations;
+    if (!faces || faces.length === 0) return null;
+
+    // 最大の顔を採用
+    var best = null;
+    var bestArea = 0;
+    faces.forEach(function (face) {
+      const v = face.boundingPoly && face.boundingPoly.vertices;
+      if (!v || v.length < 2) return;
+      const xs = v.map(function (p) { return p.x || 0; });
+      const ys = v.map(function (p) { return p.y || 0; });
+      const left = Math.min.apply(null, xs);
+      const right = Math.max.apply(null, xs);
+      const top = Math.min.apply(null, ys);
+      const bottom = Math.max.apply(null, ys);
+      const area = Math.max(0, right - left) * Math.max(0, bottom - top);
+      if (area > bestArea) {
+        bestArea = area;
+        best = { left: left, top: top, right: right, bottom: bottom };
+      }
+    });
+
+    return best;
+  } catch (e) {
+    return null;
+  }
+}
+
+// ===== Drive に名刺画像保存 =====
+function saveImageToDrive(imageBase64, cardData, side) {
+  const now = new Date();
+  const stamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyyMMdd_HHmmss');
+  const nameSafe = String(cardData.name || 'meishi')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .substring(0, 30);
+  const filename = 'meishi_' + stamp + '_' + nameSafe + '_' + side + '.jpg';
+
+  const blob = Utilities.newBlob(
+    Utilities.base64Decode(imageBase64),
+    'image/jpeg',
+    filename
+  );
+
+  const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+  const file = folder.createFile(blob);
+  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+
+  return {
+    filename: filename,
+    driveUrl: file.getUrl(),
+    fileId: file.getId()
+  };
 }
 
 // ===== Google Sheets 書き込み =====
@@ -225,7 +421,9 @@ function writeToSheet(cardData) {
     cardData.email2 || '',
     cardData.address || '',
     cardData.website || '',
-    cardData.memo || ''
+    cardData.memo || '',
+    cardData.frontImageUrl || '',
+    cardData.backImageUrl || ''
   ]);
 }
 
@@ -242,6 +440,31 @@ function testSetup() {
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
   Logger.log('シート接続OK: ' + sheet.getName());
   Logger.log('現在の行数: ' + sheet.getLastRow());
+  if (CONFIG.DRIVE_FOLDER_ID && CONFIG.DRIVE_FOLDER_ID !== 'YOUR_DRIVE_FOLDER_ID') {
+    const folder = DriveApp.getFolderById(CONFIG.DRIVE_FOLDER_ID);
+    Logger.log('DriveフォルダOK: ' + folder.getName());
+  }
+}
+
+// ===== Geminiモデル確認（Apps Scriptでこの関数を実行） =====
+function testGeminiModel() {
+  Logger.log('CONFIG.GEMINI_MODEL = ' + CONFIG.GEMINI_MODEL);
+  Logger.log('FALLBACKS = ' + JSON.stringify(CONFIG.GEMINI_MODEL_FALLBACKS || []));
+
+  const listUrl = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + CONFIG.GEMINI_API_KEY;
+  const listRes = UrlFetchApp.fetch(listUrl, { muteHttpExceptions: true });
+  Logger.log('models list HTTP ' + listRes.getResponseCode());
+
+  const ping = {
+    contents: [{ parts: [{ text: 'Reply with OK' }] }],
+    generationConfig: { temperature: 0 }
+  };
+  try {
+    const result = geminiFetch(ping);
+    Logger.log('ping OK: ' + JSON.stringify(result).substring(0, 300));
+  } catch (e) {
+    Logger.log('ping FAIL: ' + e.toString());
+  }
 }
 // ===== CAMCARDデータ移行 =====
 function migrateCAMCARD() {
@@ -382,8 +605,6 @@ function generateFurigana() {
   // 名前リストをGeminiに一括で送る
   const nameList = targets.map((t, idx) => `${idx + 1}. ${t.name}`).join('\n');
   
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + CONFIG.GEMINI_API_KEY;
-  
   const prompt = `以下の日本語の氏名リストに対して、ひらがなでふりがなを付けてください。
 外国人名の場合はカタカナではなく、できるだけひらがなで音を表記してください。
 必ず以下のJSON配列形式のみで返してください。余計な説明は不要です。
@@ -404,14 +625,8 @@ ${nameList}
       responseMimeType: 'application/json'
     }
   };
-  
-  const response = UrlFetchApp.fetch(url, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(requestBody)
-  });
-  
-  const result = JSON.parse(response.getContentText());
+
+  const result = geminiFetch(requestBody);
   const text = result.candidates[0].content.parts[0].text;
   const furiganaList = JSON.parse(text);
   
@@ -621,24 +836,43 @@ function findContact(name) {
 // ===== 連絡先新規作成 =====
 function createContact(data) {
   const contactBody = buildContactBody(data);
-  People.People.createContact(contactBody);
+  return People.People.createContact(contactBody);
 }
 
 // ===== 連絡先更新 =====
 function updateContact(existing, data) {
   const resourceName = existing.resourceName;
-  
+
   // 現在のetagを取得
   const current = People.People.get(resourceName, {
     personFields: 'names,emailAddresses,phoneNumbers,organizations,addresses,urls,biographies,metadata'
   });
-  
+
   const contactBody = buildContactBody(data);
   contactBody.etag = current.etag;
-  
-  People.People.updateContact(contactBody, resourceName, {
+
+  return People.People.updateContact(contactBody, resourceName, {
     updatePersonFields: 'names,emailAddresses,phoneNumbers,organizations,addresses,urls,biographies'
   });
+}
+
+// ===== 連絡先写真 =====
+// People API で書き込める写真スロットは実質1つ。
+// - 顔あり: くり抜いた顔 → 連絡先の顔写真
+// - 顔なし: 名刺表 → 連絡先写真（詳細の大きな表示＝バック相当）
+// 名刺表・裏の原本は常に Drive + urls / メモにも残す（バック画像として参照可能）
+function applyContactPhotos(resourceName, faceImageBase64, frontImageBase64) {
+  if (faceImageBase64) {
+    People.People.updateContactPhoto({
+      photoBytes: faceImageBase64,
+      personFields: 'photos'
+    }, resourceName);
+  } else if (frontImageBase64) {
+    People.People.updateContactPhoto({
+      photoBytes: frontImageBase64,
+      personFields: 'photos,coverPhotos'
+    }, resourceName);
+  }
 }
 
 // ===== 連絡先データ構築 =====
@@ -693,22 +927,31 @@ function buildContactBody(data) {
     }];
   }
   
-  // ウェブサイト
+  // ウェブサイト・名刺画像リンク
+  const urls = [];
   if (data.website) {
-    body.urls = [{
-      value: data.website,
-      type: 'work'
-    }];
+    urls.push({ value: data.website, type: 'work' });
   }
+  if (data.frontImageUrl) {
+    urls.push({ value: data.frontImageUrl, type: '名刺表' });
+  }
+  if (data.backImageUrl) {
+    urls.push({ value: data.backImageUrl, type: '名刺裏' });
+  }
+  if (urls.length > 0) body.urls = urls;
   
-  // メモ
-  if (data.memo) {
+  // メモ（名刺画像リンクも併記）
+  const bioParts = [];
+  if (data.memo) bioParts.push(data.memo);
+  if (data.frontImageUrl) bioParts.push('名刺表: ' + data.frontImageUrl);
+  if (data.backImageUrl) bioParts.push('名刺裏: ' + data.backImageUrl);
+  if (bioParts.length > 0) {
     body.biographies = [{
-      value: data.memo,
+      value: bioParts.join('\n'),
       contentType: 'TEXT_PLAIN'
     }];
   }
-  
+
   return body;
 }
 

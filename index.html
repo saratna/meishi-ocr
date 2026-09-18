@@ -54,12 +54,37 @@
     }
     .btn-capture { background: #e94560; color: white; }
     .btn-capture:hover { background: #c81e45; }
+    .btn-back { background: #e6a817; color: #1a1a2e; display: none; }
+    .btn-back:hover { background: #c9920f; }
     .btn-scan { background: #0f3460; color: white; display: none; }
     .btn-scan:hover { background: #16213e; }
     .btn-save { background: #2ecc71; color: white; display: none; }
     .btn-save:hover { background: #27ae60; }
     .btn-retry { background: #533483; color: white; display: none; }
     .btn-retry:hover { background: #3d2066; }
+    .capture-label {
+      width: 100%;
+      text-align: center;
+      color: #888;
+      font-size: 0.9rem;
+      margin-bottom: 8px;
+    }
+    .preview-pair {
+      display: flex;
+      gap: 8px;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    .preview-pair .preview-img {
+      flex: 1;
+      margin-bottom: 0;
+    }
+    .preview-side-label {
+      font-size: 0.75rem;
+      color: #888;
+      margin-bottom: 4px;
+    }
+    .search-card-detail a { color: #e94560; }
 
     .edit-form {
       width: 100%;
@@ -198,13 +223,24 @@
 
   <!-- スキャンタブ -->
   <div id="tab-scan" class="tab-content active">
+    <div class="capture-label" id="captureLabel">表面を撮影</div>
     <div class="camera-area">
       <video id="video" autoplay playsinline></video>
       <canvas id="canvas"></canvas>
-      <img id="preview" class="preview-img">
+      <div class="preview-pair">
+        <div style="flex:1">
+          <div class="preview-side-label">表</div>
+          <img id="previewFront" class="preview-img" alt="名刺・表">
+        </div>
+        <div id="previewBackWrap" style="flex:1; display:none">
+          <div class="preview-side-label">裏</div>
+          <img id="previewBack" class="preview-img" alt="名刺・裏">
+        </div>
+      </div>
     </div>
 
-    <button id="btnCapture" class="btn btn-capture">撮影する</button>
+    <button id="btnCapture" class="btn btn-capture">表面を撮影する</button>
+    <button id="btnCaptureBack" class="btn btn-back">裏面も撮る</button>
     <button id="btnScan" class="btn btn-scan">読み取り開始</button>
     <button id="btnRetry" class="btn btn-retry">撮り直す</button>
 
@@ -244,6 +280,12 @@
     <div id="searchResults" class="search-results"></div>
   </div>
 
+  <p style="margin-top:24px;font-size:0.85rem;color:#666;text-align:center;">
+    <a href="token-generator.html" style="color:#6cb6ff;">トークン生成</a>
+  </p>
+
+  <!-- secrets.js は gitignore。無い場合は app.js が警告を出す -->
+  <script src="secrets.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
