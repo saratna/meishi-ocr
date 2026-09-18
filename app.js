@@ -192,6 +192,7 @@ function showCameraFor(side) {
   btnCaptureBack.style.display = 'none';
   btnScan.style.display = 'none';
   btnRotate.style.display = 'none';
+  cropTools.classList.remove('show');
   btnRetry.style.display = imageFront ? 'block' : 'none';
   // 撮影中はプレビューを隠してシャッターを近くに
   previewPair.classList.remove('show');
