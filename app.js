@@ -145,24 +145,44 @@ async function startCamera() {
 function waitForVideoReady(timeoutMs) {
   return new Promise((resolve, reject) => {
     const started = Date.now();
-
-    const done = () => {
-      if (video.videoWidth > 0 && video.videoHeight > 0) {
-        cleanup();
-        resolve();
-        return true;
-      }
-      return false;
-    };
-
-    const onReady = () => { done(); };
+    let timer = null;
+    let settled = false;
 
     const cleanup = () => {
       video.removeEventListener('loadedmetadata', onReady);
       video.removeEventListener('loadeddata', onReady);
       video.removeEventListener('playing', onReady);
-      clearInterval(timer);
+      if (timer !== null) {
+        clearInterval(timer);
+        timer = null;
+      }
     };
+
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+
+    const fail = (err) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(err);
+    };
+
+    const done = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        succeed();
+        return true;
+      }
+      return false;
+    };
+
+    function onReady() {
+      done();
+    }
 
     video.addEventListener('loadedmetadata', onReady);
     video.addEventListener('loadeddata', onReady);
@@ -170,11 +190,10 @@ function waitForVideoReady(timeoutMs) {
 
     if (done()) return;
 
-    const timer = setInterval(() => {
+    timer = setInterval(() => {
       if (done()) return;
       if (Date.now() - started > timeoutMs) {
-        cleanup();
-        reject(new Error('カメラ映像の準備がタイムアウトしました'));
+        fail(new Error('カメラ映像の準備がタイムアウトしました'));
       }
     }, 100);
   });
