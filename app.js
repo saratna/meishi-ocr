@@ -105,92 +105,156 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 // ===== カメラ起動 =====
-async function startCamera() {
-  try {
-    btnCapture.disabled = true;
-    btnCapture.textContent = 'カメラ起動中...';
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: 'environment' },
-        width: { ideal: 1920 },
-        height: { ideal: 1080 }
-      },
-      audio: false
+function withTimeout(promise, ms, message) {
+  var timer = null;
+  var timeout = new Promise(function (_, reject) {
+    timer = setTimeout(function () { reject(new Error(message)); }, ms);
+  });
+  return Promise.race([promise, timeout]).finally(function () {
+    if (timer !== null) clearTimeout(timer);
+  });
+}
+
+function stopCameraTracks() {
+  var stream = video.srcObject;
+  if (stream && stream.getTracks) {
+    stream.getTracks().forEach(function (track) {
+      try { track.stop(); } catch (e) { /* ignore */ }
     });
-    video.srcObject = stream;
-    video.muted = true;
-    video.setAttribute('playsinline', 'true');
-    video.setAttribute('autoplay', 'true');
+  }
+  video.srcObject = null;
+}
 
-    // 一部端末では play() しないと videoWidth が 0 のまま
-    try {
-      await video.play();
-    } catch (playErr) {
-      console.warn('video.play:', playErr);
+async function startCamera() {
+  btnCapture.disabled = true;
+  btnCapture.textContent = 'カメラ起動中...';
+  captureLabel.textContent = 'カメラ許可が出たら「許可」を押してください';
+
+  var safety = setTimeout(function () {
+    if (btnCapture.disabled && String(btnCapture.textContent).indexOf('起動中') !== -1) {
+      btnCapture.disabled = false;
+      btnCapture.textContent = 'カメラを再試行';
+      captureLabel.textContent = '起動が遅れています。再試行を押してください';
+    }
+  }, 20000);
+
+  try {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      throw new Error('このブラウザはカメラ非対応です（HTTPSで開いてください）');
     }
 
-    await waitForVideoReady(15000);
+    stopCameraTracks();
+
+    var stream = null;
+    var attempts = [
+      { video: { facingMode: { ideal: 'environment' } }, audio: false },
+      { video: { facingMode: 'environment' }, audio: false },
+      { video: true, audio: false }
+    ];
+    var lastErr = null;
+    for (var i = 0; i < attempts.length; i++) {
+      try {
+        captureLabel.textContent = 'カメラ接続中... (' + (i + 1) + '/' + attempts.length + ')';
+        stream = await withTimeout(
+          navigator.mediaDevices.getUserMedia(attempts[i]),
+          10000,
+          'カメラ許可がタイムアウトしました'
+        );
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (!stream) throw lastErr || new Error('カメラを開けませんでした');
+
+    video.srcObject = stream;
+    video.muted = true;
+    video.defaultMuted = true;
+    video.playsInline = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('webkit-playsinline', 'true');
+    video.setAttribute('autoplay', 'true');
+
+    // play() が返らない端末があるので最大2秒で打ち切り
+    captureLabel.textContent = 'カメラ映像を開始しています...';
+    await Promise.race([
+      video.play().catch(function () { return null; }),
+      sleep(2000)
+    ]);
+
+    try {
+      await waitForVideoReady(5000);
+      captureLabel.textContent = captureSide === 'back' ? '裏面を撮影' : '表面を撮影（準備完了）';
+    } catch (readyErr) {
+      captureLabel.textContent = '映像準備中でも撮影できます';
+    }
+
     btnCapture.disabled = false;
     btnCapture.textContent = captureSide === 'back' ? '裏面を撮影する' : '表面を撮影する';
-    captureLabel.textContent = captureSide === 'back' ? '裏面を撮影' : '表面を撮影（準備完了）';
   } catch (err) {
     btnCapture.disabled = false;
     btnCapture.textContent = 'カメラを再試行';
     captureLabel.textContent = 'カメラを起動できませんでした';
-    alert('カメラを起動できませんでした: ' + err.message + '\n\nブラウザのカメラ許可を確認し、もう一度ボタンを押してください。');
+    alert('カメラを起動できませんでした: ' + (err && err.message ? err.message : String(err)) +
+      '\\n\\n・HTTPSで開いているか\\n・カメラを「許可」したか\\n・他アプリがカメラ使用中でないか\\nを確認してください。');
+  } finally {
+    clearTimeout(safety);
   }
 }
 
 function waitForVideoReady(timeoutMs) {
-  return new Promise((resolve, reject) => {
-    const started = Date.now();
-    let timer = null;
-    let settled = false;
+  return new Promise(function (resolve, reject) {
+    var started = Date.now();
+    var timer = null;
+    var settled = false;
 
-    const cleanup = () => {
+    function cleanup() {
       video.removeEventListener('loadedmetadata', onReady);
       video.removeEventListener('loadeddata', onReady);
       video.removeEventListener('playing', onReady);
+      video.removeEventListener('canplay', onReady);
       if (timer !== null) {
         clearInterval(timer);
         timer = null;
       }
-    };
+    }
 
-    const succeed = () => {
+    function succeed() {
       if (settled) return;
       settled = true;
       cleanup();
       resolve();
-    };
+    }
 
-    const fail = (err) => {
+    function fail(err) {
       if (settled) return;
       settled = true;
       cleanup();
       reject(err);
-    };
+    }
 
-    const done = () => {
+    function done() {
       if (video.videoWidth > 0 && video.videoHeight > 0) {
         succeed();
         return true;
       }
       return false;
-    };
-
-    function onReady() {
-      done();
     }
+
+    function onReady() { done(); }
 
     video.addEventListener('loadedmetadata', onReady);
     video.addEventListener('loadeddata', onReady);
     video.addEventListener('playing', onReady);
+    video.addEventListener('canplay', onReady);
 
     if (done()) return;
 
-    timer = setInterval(() => {
+    timer = setInterval(function () {
       if (done()) return;
       if (Date.now() - started > timeoutMs) {
         fail(new Error('カメラ映像の準備がタイムアウトしました'));
@@ -313,8 +377,9 @@ function showPostCaptureActions() {
 
 // ===== 撮影 =====
 btnCapture.addEventListener('click', async () => {
-  // カメラ未起動時は起動し直す
-  if (!video.srcObject) {
+  // 未起動・再試行・ストリームなしならカメラ起動
+  const label = String(btnCapture.textContent || '');
+  if (!video.srcObject || label.indexOf('再試行') !== -1 || label.indexOf('起動中') !== -1) {
     await startCamera();
     return;
   }
