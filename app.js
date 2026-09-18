@@ -123,18 +123,22 @@ function updatePreviewVisibility() {
     previewFront.src = 'data:image/jpeg;base64,' + imageFront;
     previewFront.style.display = 'block';
   } else {
+    previewFront.removeAttribute('src');
     previewFront.style.display = 'none';
   }
 
   if (imageBack) {
     previewBack.src = 'data:image/jpeg;base64,' + imageBack;
+    previewBack.style.display = 'block';
     previewBackWrap.style.display = 'block';
   } else {
+    previewBack.removeAttribute('src');
+    previewBack.style.display = 'none';
     previewBackWrap.style.display = 'none';
   }
 }
 
-function showPostFrontActions() {
+function showPostCaptureActions() {
   video.style.display = 'none';
   btnCapture.style.display = 'none';
   btnCaptureBack.style.display = imageBack ? 'none' : 'block';
@@ -162,7 +166,7 @@ btnCapture.addEventListener('click', () => {
     faceImage = '';
   }
 
-  showPostFrontActions();
+  showPostCaptureActions();
   if (captureSide === 'back') {
     captureLabel.textContent = '表・裏 撮影済み';
   } else {
@@ -172,6 +176,8 @@ btnCapture.addEventListener('click', () => {
 
 // ===== 裏面撮影モードへ =====
 btnCaptureBack.addEventListener('click', () => {
+  // 表のプレビューは残しつつ、カメラで裏を撮る
+  updatePreviewVisibility();
   showCameraFor('back');
 });
 
@@ -263,12 +269,12 @@ btnScan.addEventListener('click', async () => {
       }
     } else {
       alert('読み取りエラー: ' + (result.message || '不明'));
-      showPostFrontActions();
+      showPostCaptureActions();
     }
   } catch (err) {
     loading.classList.remove('show');
     alert('通信エラー: ' + err.message);
-    showPostFrontActions();
+    showPostCaptureActions();
   }
 });
 
