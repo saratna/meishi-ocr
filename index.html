@@ -86,9 +86,23 @@ video {
     .btn-rotate {
       background: #2a3f5f;
       color: #e0e0e0;
-      display: none;
     }
     .btn-rotate:hover { background: #35507a; }
+    .rotate-tools {
+      width: 100%;
+      max-width: 400px;
+      display: none;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .rotate-tools.show { display: flex; }
+    .rotate-tools .btn {
+      flex: 1;
+      margin-bottom: 0;
+      padding: 14px 8px;
+      font-size: 0.95rem;
+      display: block;
+    }
     .btn-crop {
       background: #1f6f8b;
       color: #fff;
@@ -348,7 +362,10 @@ video {
       </div>
     </div>
 
-    <button id="btnRotate" class="btn btn-rotate">90°回転（向き修正）</button>
+    <div class="rotate-tools" id="rotateTools">
+      <button id="btnRotateLeft" class="btn btn-rotate" type="button" onclick="window.rotateMeishi && window.rotateMeishi(-90, event)">左に90°</button>
+      <button id="btnRotateRight" class="btn btn-rotate" type="button" onclick="window.rotateMeishi && window.rotateMeishi(90, event)">右に90°</button>
+    </div>
     <div class="crop-tools" id="cropTools">
       <button id="btnCropSquare" class="btn btn-crop" type="button">正方形で切る</button>
       <button id="btnCropQuad" class="btn btn-crop" type="button">4点で切る</button>
@@ -411,7 +428,7 @@ video {
   </div>
 
   <!-- secrets.js は gitignore。無い場合は app.js が警告を出す -->
-  <script src="secrets.js?v=20260318e"></script>
-  <script src="app.js?v=20260318e"></script>
+  <script src="secrets.js?v=20260318f"></script>
+  <script src="app.js?v=20260318f"></script>
 </body>
 </html>

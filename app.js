@@ -47,7 +47,9 @@ const btnCapture = document.getElementById('btnCapture');
 const btnCaptureBack = document.getElementById('btnCaptureBack');
 const btnScan = document.getElementById('btnScan');
 const btnRetry = document.getElementById('btnRetry');
-const btnRotate = document.getElementById('btnRotate');
+const btnRotateLeft = document.getElementById('btnRotateLeft');
+const btnRotateRight = document.getElementById('btnRotateRight');
+const rotateTools = document.getElementById('rotateTools');
 const btnCropSquare = document.getElementById('btnCropSquare');
 const btnCropQuad = document.getElementById('btnCropQuad');
 const cropTools = document.getElementById('cropTools');
@@ -374,7 +376,7 @@ function showCameraFor(side) {
   btnCapture.textContent = side === 'back' ? '裏面を撮影する' : '表面を撮影する';
   btnCaptureBack.style.display = 'none';
   btnScan.style.display = 'none';
-  btnRotate.style.display = 'none';
+  if (rotateTools) rotateTools.classList.remove('show');
   cropTools.classList.remove('show');
   btnRetry.style.display = imageFront ? 'block' : 'none';
   // 撮影中はプレビューを隠してシャッターを近くに
@@ -390,6 +392,8 @@ function showCameraFor(side) {
 
 function updatePreviewVisibility() {
   if (imageFront) {
+    // 同一dataURLでも回転を反映するため一度クリア
+    previewFront.removeAttribute('src');
     previewFront.src = 'data:image/jpeg;base64,' + imageFront;
     previewFront.style.display = 'block';
   } else {
@@ -398,6 +402,7 @@ function updatePreviewVisibility() {
   }
 
   if (imageBack) {
+    previewBack.removeAttribute('src');
     previewBack.src = 'data:image/jpeg;base64,' + imageBack;
     previewBack.style.display = 'block';
     previewBackWrap.style.display = 'block';
@@ -409,7 +414,7 @@ function updatePreviewVisibility() {
 
   const hasAny = !!(imageFront || imageBack);
   previewPair.classList.toggle('show', hasAny);
-  btnRotate.style.display = hasAny ? 'block' : 'none';
+  if (rotateTools) rotateTools.classList.toggle('show', hasAny);
   cropTools.classList.toggle('show', hasAny);
 }
 
@@ -506,28 +511,66 @@ window.takeMeishiPhoto = takePhoto;
   }, { passive: false });
 });
 
-// ===== 向きの手動修正（90°ずつ・直近に撮った面） =====
-btnRotate.addEventListener('click', async () => {
+// ===== 向きの手動修正（左右90°・直近に撮った面） =====
+let rotateBusy = false;
+let lastRotateAt = 0;
+
+async function rotateMeishi(degrees, ev) {
+  if (ev) {
+    try { ev.preventDefault(); } catch (e) { /* ignore */ }
+  }
+  if (rotateBusy) return;
+  if (Date.now() - lastRotateAt < 400) return;
+  lastRotateAt = Date.now();
+  rotateBusy = true;
+
+  captureLabel.textContent = '回転しています...';
+
   try {
     const side = (lastCapturedSide === 'back' && imageBack) ? 'back'
       : imageFront ? 'front'
       : imageBack ? 'back' : null;
-    if (!side) return;
+    if (!side) {
+      captureLabel.textContent = '先に撮影してください';
+      return;
+    }
 
+    const deg = Number(degrees) || 90;
     if (side === 'back') {
-      imageBack = await rotateBase64(imageBack, 90);
+      imageBack = await rotateBase64(imageBack, deg);
       skipAutoLandscape.back = true;
     } else {
-      imageFront = await rotateBase64(imageFront, 90);
+      imageFront = await rotateBase64(imageFront, deg);
       skipAutoLandscape.front = true;
       faceBox = null;
       faceImage = '';
     }
     updatePreviewVisibility();
+    captureLabel.textContent = (side === 'back' ? '裏面' : '表面') + 'を' + deg + '°回転しました';
   } catch (err) {
-    alert('回転に失敗しました: ' + err.message);
+    captureLabel.textContent = '回転に失敗しました';
+    alert('回転に失敗しました: ' + (err && err.message ? err.message : String(err)));
+  } finally {
+    rotateBusy = false;
   }
-});
+}
+
+window.rotateMeishi = rotateMeishi;
+
+function bindButtonEvents(el, handler) {
+  if (!el) return;
+  ['click', 'pointerup', 'touchend'].forEach(function (evtName) {
+    el.addEventListener(evtName, function (ev) {
+      if (evtName === 'touchend') {
+        try { ev.preventDefault(); } catch (e) { /* ignore */ }
+      }
+      handler(ev);
+    }, { passive: false });
+  });
+}
+
+bindButtonEvents(btnRotateLeft, function (ev) { rotateMeishi(-90, ev); });
+bindButtonEvents(btnRotateRight, function (ev) { rotateMeishi(90, ev); });
 
 // ===== 裏面撮影モードへ =====
 btnCaptureBack.addEventListener('click', () => {
@@ -547,7 +590,7 @@ function resetCamera() {
   previewBackWrap.style.display = 'none';
   previewPair.classList.remove('show');
   captureHint.classList.remove('show');
-  btnRotate.style.display = 'none';
+  if (rotateTools) rotateTools.classList.remove('show');
   cropTools.classList.remove('show');
   btnSave.style.display = 'none';
   editForm.classList.remove('show');
