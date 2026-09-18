@@ -107,17 +107,96 @@ document.querySelectorAll('.tab').forEach(tab => {
 // ===== カメラ起動 =====
 async function startCamera() {
   try {
+    btnCapture.disabled = true;
+    btnCapture.textContent = 'カメラ起動中...';
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
-        facingMode: 'environment',
+        facingMode: { ideal: 'environment' },
         width: { ideal: 1920 },
         height: { ideal: 1080 }
-      }
+      },
+      audio: false
     });
     video.srcObject = stream;
+    video.muted = true;
+    video.setAttribute('playsinline', 'true');
+    video.setAttribute('autoplay', 'true');
+
+    // 一部端末では play() しないと videoWidth が 0 のまま
+    try {
+      await video.play();
+    } catch (playErr) {
+      console.warn('video.play:', playErr);
+    }
+
+    await waitForVideoReady(15000);
+    btnCapture.disabled = false;
+    btnCapture.textContent = captureSide === 'back' ? '裏面を撮影する' : '表面を撮影する';
+    captureLabel.textContent = captureSide === 'back' ? '裏面を撮影' : '表面を撮影（準備完了）';
   } catch (err) {
-    alert('カメラを起動できませんでした: ' + err.message);
+    btnCapture.disabled = false;
+    btnCapture.textContent = 'カメラを再試行';
+    captureLabel.textContent = 'カメラを起動できませんでした';
+    alert('カメラを起動できませんでした: ' + err.message + '\n\nブラウザのカメラ許可を確認し、もう一度ボタンを押してください。');
   }
+}
+
+function waitForVideoReady(timeoutMs) {
+  return new Promise((resolve, reject) => {
+    const started = Date.now();
+
+    const done = () => {
+      if (video.videoWidth > 0 && video.videoHeight > 0) {
+        cleanup();
+        resolve();
+        return true;
+      }
+      return false;
+    };
+
+    const onReady = () => { done(); };
+
+    const cleanup = () => {
+      video.removeEventListener('loadedmetadata', onReady);
+      video.removeEventListener('loadeddata', onReady);
+      video.removeEventListener('playing', onReady);
+      clearInterval(timer);
+    };
+
+    video.addEventListener('loadedmetadata', onReady);
+    video.addEventListener('loadeddata', onReady);
+    video.addEventListener('playing', onReady);
+
+    if (done()) return;
+
+    const timer = setInterval(() => {
+      if (done()) return;
+      if (Date.now() - started > timeoutMs) {
+        cleanup();
+        reject(new Error('カメラ映像の準備がタイムアウトしました'));
+      }
+    }, 100);
+  });
+}
+
+function captureFrameFromVideo() {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  if (!vw || !vh) {
+    throw new Error('カメラ映像がまだ準備できていません。少し待ってからもう一度押してください。');
+  }
+
+  canvas.width = vw;
+  canvas.height = vh;
+  const ctx = canvas.getContext('2d');
+  // willReadFrequently 不要。一部端末向けに描画を確定
+  ctx.drawImage(video, 0, 0, vw, vh);
+  const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+  if (!dataUrl || dataUrl === 'data:,') {
+    throw new Error('画像の取得に失敗しました');
+  }
+  return dataUrl.split(',')[1];
 }
 
 // ===== 画像ユーティリティ（名刺は横長が標準） =====
@@ -154,33 +233,6 @@ async function ensureLandscapeBase64(base64) {
   const img = await loadImageFromBase64(base64);
   if (img.width >= img.height) return base64;
   return rotateBase64(base64, 90);
-}
-
-function captureFrameFromVideo() {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
-  if (!vw || !vh) {
-    throw new Error('カメラ映像がまだ準備できていません');
-  }
-
-  // 画面の向きに合わせてキャンバスへ描画（端末を横にした場合のズレを補正）
-  let angle = 0;
-  try {
-    const type = (screen.orientation && screen.orientation.type) || '';
-    if (type.indexOf('landscape-primary') !== -1) angle = 0;
-    else if (type.indexOf('landscape-secondary') !== -1) angle = 180;
-    else if (type.indexOf('portrait-secondary') !== -1) angle = 180;
-    // portrait-primary はそのまま（後で横長化）
-  } catch (e) {
-    // ignore
-  }
-
-  // video の実ピクセルはそのまま描画（CSS回転はしない）
-  canvas.width = vw;
-  canvas.height = vh;
-  const ctx = canvas.getContext('2d');
-  ctx.drawImage(video, 0, 0, vw, vh);
-  return canvasToJpegBase64(canvas, 0.9);
 }
 
 function showCameraFor(side) {
@@ -242,7 +294,26 @@ function showPostCaptureActions() {
 
 // ===== 撮影 =====
 btnCapture.addEventListener('click', async () => {
+  // カメラ未起動時は起動し直す
+  if (!video.srcObject) {
+    await startCamera();
+    return;
+  }
+
+  btnCapture.disabled = true;
+  const prevLabel = btnCapture.textContent;
+  btnCapture.textContent = '撮影中...';
+  captureLabel.textContent = '撮影しています...';
+
   try {
+    // まだ準備できていなければ短く待つ
+    if (!video.videoWidth || !video.videoHeight) {
+      try {
+        await video.play();
+      } catch (e) { /* ignore */ }
+      await waitForVideoReady(5000);
+    }
+
     let base64 = captureFrameFromVideo();
 
     // 名刺は横長が標準。縦撮りなら自動で横向きへ
@@ -271,7 +342,12 @@ btnCapture.addEventListener('click', async () => {
       captureLabel.textContent = '表面 撮影済み（裏面は任意）';
     }
   } catch (err) {
+    captureLabel.textContent = '撮影に失敗しました';
     alert(err.message || String(err));
+    btnCapture.style.display = 'block';
+    btnCapture.textContent = prevLabel || '表面を撮影する';
+  } finally {
+    btnCapture.disabled = false;
   }
 });
 

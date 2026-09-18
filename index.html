@@ -28,12 +28,19 @@
       max-width: 400px;
       margin-bottom: 12px;
     }
-    video, canvas {
+video {
       width: 100%;
       border-radius: 12px;
       display: block;
+      background: #000;
+      min-height: 220px;
+      object-fit: cover;
     }
-    canvas { display: none; }
+    canvas {
+      width: 100%;
+      border-radius: 12px;
+      display: none;
+    }
     .preview-img {
       width: 100%;
       border-radius: 12px;
@@ -105,7 +112,7 @@
 
     /* 切り取りエディタ */
     .crop-editor {
-      display: none;
+      display: none !important;
       position: fixed;
       inset: 0;
       z-index: 1000;
@@ -114,8 +121,12 @@
       align-items: center;
       padding: 12px;
       overflow: auto;
+      pointer-events: none;
     }
-    .crop-editor.show { display: flex; }
+    .crop-editor.show {
+      display: flex !important;
+      pointer-events: auto;
+    }
     .crop-editor h2 {
       color: #e94560;
       font-size: 1.1rem;
@@ -320,7 +331,7 @@
     <div class="capture-label" id="captureLabel">表面を撮影</div>
     <div class="capture-hint" id="captureHint">表は撮影済み。裏面を写して撮影してください</div>
     <div class="camera-area">
-      <video id="video" autoplay playsinline></video>
+      <video id="video" autoplay playsinline muted></video>
       <canvas id="canvas"></canvas>
     </div>
 
