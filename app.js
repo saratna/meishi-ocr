@@ -53,6 +53,8 @@ const rotateTools = document.getElementById('rotateTools');
 const btnCropSquare = document.getElementById('btnCropSquare');
 const btnCropQuad = document.getElementById('btnCropQuad');
 const cropTools = document.getElementById('cropTools');
+const btnAutoCrop = document.getElementById('btnAutoCrop');
+const actionTools = document.getElementById('actionTools');
 const cropEditor = document.getElementById('cropEditor');
 const cropCanvas = document.getElementById('cropCanvas');
 const cropTitle = document.getElementById('cropTitle');
@@ -374,11 +376,9 @@ function showCameraFor(side) {
   video.style.display = 'block';
   btnCapture.style.display = 'block';
   btnCapture.textContent = side === 'back' ? '裏面を撮影する' : '表面を撮影する';
-  btnCaptureBack.style.display = 'none';
-  btnScan.style.display = 'none';
   if (rotateTools) rotateTools.classList.remove('show');
-  cropTools.classList.remove('show');
-  btnRetry.style.display = imageFront ? 'block' : 'none';
+  if (cropTools) cropTools.classList.remove('show');
+  if (actionTools) actionTools.classList.remove('show');
   // 撮影中はプレビューを隠してシャッターを近くに
   previewPair.classList.remove('show');
   if (side === 'back' && imageFront) {
@@ -415,16 +415,42 @@ function updatePreviewVisibility() {
   const hasAny = !!(imageFront || imageBack);
   previewPair.classList.toggle('show', hasAny);
   if (rotateTools) rotateTools.classList.toggle('show', hasAny);
-  cropTools.classList.toggle('show', hasAny);
+  if (cropTools) cropTools.classList.toggle('show', hasAny);
+  if (actionTools) actionTools.classList.toggle('show', hasAny);
 }
 
 function showPostCaptureActions() {
   video.style.display = 'none';
   btnCapture.style.display = 'none';
   captureHint.classList.remove('show');
-  btnCaptureBack.style.display = imageBack ? 'none' : 'block';
-  btnScan.style.display = 'block';
-  btnRetry.style.display = 'block';
+  // コンテナ表示に任せつつ、過去の inline display:none を必ず解除
+  if (btnCaptureBack) {
+    btnCaptureBack.style.display = imageBack ? 'none' : 'block';
+    btnCaptureBack.disabled = false;
+  }
+  if (btnScan) {
+    btnScan.style.display = 'block';
+    btnScan.disabled = false;
+  }
+  if (btnRetry) {
+    btnRetry.style.display = 'block';
+    btnRetry.disabled = false;
+  }
+  if (btnAutoCrop) {
+    btnAutoCrop.style.display = 'block';
+    btnAutoCrop.disabled = false;
+  }
+  if (btnCropSquare) {
+    btnCropSquare.style.display = 'block';
+    btnCropSquare.disabled = false;
+  }
+  if (btnCropQuad) {
+    btnCropQuad.style.display = 'block';
+    btnCropQuad.disabled = false;
+  }
+  if (actionTools) actionTools.classList.add('show');
+  if (cropTools) cropTools.classList.add('show');
+  if (rotateTools) rotateTools.classList.add('show');
   updatePreviewVisibility();
 }
 
@@ -572,11 +598,21 @@ function bindButtonEvents(el, handler) {
 bindButtonEvents(btnRotateLeft, function (ev) { rotateMeishi(-90, ev); });
 bindButtonEvents(btnRotateRight, function (ev) { rotateMeishi(90, ev); });
 
-// ===== 裏面撮影モードへ =====
-btnCaptureBack.addEventListener('click', () => {
-  // 表プレビューは隠してカメラ＋シャッターを前面に
+// ===== 裏面撮影・読み取り・撮り直し =====
+function startBackCapture(ev) {
+  if (ev) { try { ev.preventDefault(); } catch (e) {} }
   showCameraFor('back');
-});
+}
+window.startBackCapture = startBackCapture;
+bindButtonEvents(btnCaptureBack, startBackCapture);
+
+function resetMeishiCamera(ev) {
+  if (ev) { try { ev.preventDefault(); } catch (e) {} }
+  resetCamera();
+}
+window.resetMeishiCamera = resetMeishiCamera;
+bindButtonEvents(btnRetry, resetMeishiCamera);
+bindButtonEvents(btnCancel, resetMeishiCamera);
 
 // ===== 撮り直し =====
 function resetCamera() {
@@ -591,15 +627,220 @@ function resetCamera() {
   previewPair.classList.remove('show');
   captureHint.classList.remove('show');
   if (rotateTools) rotateTools.classList.remove('show');
-  cropTools.classList.remove('show');
+  if (cropTools) cropTools.classList.remove('show');
+  if (actionTools) actionTools.classList.remove('show');
   btnSave.style.display = 'none';
   editForm.classList.remove('show');
   status.classList.remove('show');
   showCameraFor('front');
 }
 
-btnRetry.addEventListener('click', resetCamera);
-btnCancel.addEventListener('click', resetCamera);
+
+
+// ===== 名刺四隅の自動検出 → 真四角補正 =====
+function toGray(data, w, h) {
+  const g = new Uint8ClampedArray(w * h);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    g[p] = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) | 0;
+  }
+  return g;
+}
+
+function sobelEdges(gray, w, h) {
+  const out = new Float32Array(w * h);
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx =
+        -gray[i - w - 1] + gray[i - w + 1]
+        -2 * gray[i - 1] + 2 * gray[i + 1]
+        -gray[i + w - 1] + gray[i + w + 1];
+      const gy =
+        -gray[i - w - 1] - 2 * gray[i - w] - gray[i - w + 1]
+        + gray[i + w - 1] + 2 * gray[i + w] + gray[i + w + 1];
+      out[i] = Math.abs(gx) + Math.abs(gy);
+    }
+  }
+  return out;
+}
+
+function convexHull(points) {
+  if (points.length <= 3) return points.slice();
+  points = points.slice().sort(function (a, b) {
+    return a.x === b.x ? a.y - b.y : a.x - b.x;
+  });
+  function cross(o, a, b) {
+    return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+  }
+  const lower = [];
+  for (let i = 0; i < points.length; i++) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], points[i]) <= 0) lower.pop();
+    lower.push(points[i]);
+  }
+  const upper = [];
+  for (let i = points.length - 1; i >= 0; i--) {
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], points[i]) <= 0) upper.pop();
+    upper.push(points[i]);
+  }
+  lower.pop();
+  upper.pop();
+  return lower.concat(upper);
+}
+
+function quadArea(pts) {
+  let a = 0;
+  for (let i = 0; i < 4; i++) {
+    const j = (i + 1) % 4;
+    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
+  }
+  return Math.abs(a) / 2;
+}
+
+function orderQuadPoints(pts) {
+  // TL, TR, BR, BL
+  const sum = pts.map(function (p) { return { p: p, s: p.x + p.y, d: p.x - p.y }; });
+  const tl = sum.reduce(function (a, b) { return a.s < b.s ? a : b; }).p;
+  const br = sum.reduce(function (a, b) { return a.s > b.s ? a : b; }).p;
+  const tr = sum.reduce(function (a, b) { return a.d > b.d ? a : b; }).p;
+  const bl = sum.reduce(function (a, b) { return a.d < b.d ? a : b; }).p;
+  return [tl, tr, br, bl];
+}
+
+function detectCardCorners(img) {
+  const maxW = 420;
+  const scale = Math.min(1, maxW / img.width);
+  const w = Math.max(32, Math.round(img.width * scale));
+  const h = Math.max(32, Math.round(img.height * scale));
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0, w, h);
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const gray = toGray(imageData.data, w, h);
+  const edges = sobelEdges(gray, w, h);
+
+  // 上位エッジ閾値
+  let maxE = 0;
+  for (let i = 0; i < edges.length; i++) if (edges[i] > maxE) maxE = edges[i];
+  const thr = Math.max(40, maxE * 0.18);
+
+  const pts = [];
+  const step = 2;
+  for (let y = 2; y < h - 2; y += step) {
+    for (let x = 2; x < w - 2; x += step) {
+      if (edges[y * w + x] >= thr) pts.push({ x: x, y: y });
+    }
+  }
+  if (pts.length < 20) {
+    // フォールバック: 少し内側の矩形
+    const m = Math.round(Math.min(w, h) * 0.06);
+    return orderQuadPoints([
+      { x: m / scale, y: m / scale },
+      { x: (w - m) / scale, y: m / scale },
+      { x: (w - m) / scale, y: (h - m) / scale },
+      { x: m / scale, y: (h - m) / scale }
+    ]);
+  }
+
+  // 点数が多いので間引き
+  const sampled = [];
+  const stride = Math.max(1, Math.floor(pts.length / 400));
+  for (let i = 0; i < pts.length; i += stride) sampled.push(pts[i]);
+  const hull = convexHull(sampled);
+  if (hull.length < 4) {
+    const m = Math.round(Math.min(w, h) * 0.06);
+    return orderQuadPoints([
+      { x: m / scale, y: m / scale },
+      { x: (w - m) / scale, y: m / scale },
+      { x: (w - m) / scale, y: (h - m) / scale },
+      { x: m / scale, y: (h - m) / scale }
+    ]);
+  }
+
+  // 凸包から面積最大の四角形を探索（点数を間引き）
+  let best = null;
+  let bestArea = 0;
+  const n = hull.length;
+  const lim = Math.min(n, 36);
+  const idx = [];
+  for (let i = 0; i < lim; i++) idx.push(Math.floor(i * n / lim));
+
+  for (let a = 0; a < idx.length; a++) {
+    for (let b = a + 1; b < idx.length; b++) {
+      for (let c = b + 1; c < idx.length; c++) {
+        for (let d = c + 1; d < idx.length; d++) {
+          const quad = [hull[idx[a]], hull[idx[b]], hull[idx[c]], hull[idx[d]]];
+          const area = quadArea(quad);
+          if (area > bestArea) {
+            bestArea = area;
+            best = quad;
+          }
+        }
+      }
+    }
+  }
+
+  if (!best || bestArea < (w * h * 0.08)) {
+    const m = Math.round(Math.min(w, h) * 0.05);
+    best = [
+      { x: m, y: m },
+      { x: w - m, y: m },
+      { x: w - m, y: h - m },
+      { x: m, y: h - m }
+    ];
+  }
+
+  // 少し内側に寄せて余白を減らす（安定化）
+  const ordered = orderQuadPoints(best);
+  const cx = (ordered[0].x + ordered[1].x + ordered[2].x + ordered[3].x) / 4;
+  const cy = (ordered[0].y + ordered[1].y + ordered[2].y + ordered[3].y) / 4;
+  const inset = 0.02; // 2% 内側へ
+  const refined = ordered.map(function (p) {
+    return {
+      x: (p.x + (cx - p.x) * inset) / scale,
+      y: (p.y + (cy - p.y) * inset) / scale
+    };
+  });
+  return orderQuadPoints(refined);
+}
+
+async function autoCropMeishi(ev) {
+  if (ev) { try { ev.preventDefault(); } catch (e) {} }
+  const side = getActiveCropSide();
+  const base64 = getActiveCropBase64();
+  if (!side || !base64) {
+    alert('先に名刺を撮影してください');
+    return;
+  }
+  captureLabel.textContent = '四隅を自動検出中...';
+  try {
+    const img = await loadImageFromBase64(base64);
+    const corners = detectCardCorners(img);
+    const next = await warpQuadToSquare(base64, corners);
+    setActiveCropBase64(next);
+    // 真四角になったので横長自動変換はスキップ
+    if (side === 'back') skipAutoLandscape.back = true;
+    else skipAutoLandscape.front = true;
+    updatePreviewVisibility();
+    captureLabel.textContent = '自動で真四角に補正しました';
+  } catch (err) {
+    console.error(err);
+    captureLabel.textContent = '自動切り取りに失敗';
+    alert('自動切り取りに失敗しました: ' + (err && err.message ? err.message : String(err)));
+  }
+}
+window.autoCropMeishi = autoCropMeishi;
+bindButtonEvents(btnAutoCrop, autoCropMeishi);
+bindButtonEvents(btnCropSquare, function (ev) {
+  if (ev) { try { ev.preventDefault(); } catch (e) {} }
+  openCropEditor('square');
+});
+bindButtonEvents(btnCropQuad, function (ev) {
+  if (ev) { try { ev.preventDefault(); } catch (e) {} }
+  openCropEditor('quad');
+});
+
 
 // ===== 切り取りエディタ =====
 const cropState = {
@@ -753,6 +994,7 @@ function hitTestCrop(imgX, imgY) {
   return null;
 }
 
+window.openCropEditor = openCropEditor;
 function openCropEditor(mode) {
   const side = getActiveCropSide();
   const base64 = getActiveCropBase64();
@@ -1122,12 +1364,24 @@ function cropFaceFromFront(box) {
 }
 
 // ===== 読み取り（OCR + Gemini → 編集フォームに表示） =====
-btnScan.addEventListener('click', async () => {
+async function startMeishiScan(ev) {
+  if (ev) { try { ev.preventDefault(); } catch (e) {} }
+  if (!imageFront) {
+    alert('先に表面を撮影してください');
+    return;
+  }
+  // fall through by calling the original logic via duplicated trigger
+  await runMeishiScan();
+}
+window.startMeishiScan = startMeishiScan;
+bindButtonEvents(btnScan, startMeishiScan);
+
+async function runMeishiScan() {
   if (!imageFront) return;
 
-  btnScan.style.display = 'none';
-  btnCaptureBack.style.display = 'none';
-  btnRetry.style.display = 'none';
+  if (actionTools) actionTools.classList.remove('show');
+  if (cropTools) cropTools.classList.remove('show');
+  if (rotateTools) rotateTools.classList.remove('show');
   loading.textContent = imageBack
     ? '処理中...表・裏を読み取っています'
     : '処理中...名刺を読み取っています';
@@ -1171,7 +1425,7 @@ btnScan.addEventListener('click', async () => {
     alert('通信エラー: ' + err.message);
     showPostCaptureActions();
   }
-});
+}
 
 // ===== 登録（編集後のデータをSheetsに書き込み） =====
 btnSave.addEventListener('click', async () => {

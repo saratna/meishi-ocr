@@ -106,22 +106,41 @@ video {
     .btn-crop {
       background: #1f6f8b;
       color: #fff;
-      display: none;
     }
     .btn-crop:hover { background: #185a70; }
+    .btn-autocrop {
+      background: #0f766e;
+      color: #fff;
+    }
+    .btn-autocrop:hover { background: #0b5f59; }
     .crop-tools {
       width: 100%;
       max-width: 400px;
       display: none;
+      flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 10px;
     }
     .crop-tools.show { display: flex; }
     .crop-tools .btn {
-      flex: 1;
+      flex: 1 1 45%;
       margin-bottom: 0;
       padding: 12px 8px;
-      font-size: 0.95rem;
+      font-size: 0.9rem;
+      display: block;
+    }
+    .action-tools {
+      width: 100%;
+      max-width: 400px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+    .action-tools.show { display: flex; }
+    .action-tools .btn {
+      display: block;
+      margin-bottom: 0;
     }
 
     /* 切り取りエディタ */
@@ -188,13 +207,13 @@ video {
     }
     .btn-capture { background: #e94560; color: white; }
     .btn-capture:hover { background: #c81e45; }
-    .btn-back { background: #e6a817; color: #1a1a2e; display: none; }
+    .btn-back { background: #e6a817; color: #1a1a2e; }
     .btn-back:hover { background: #c9920f; }
-    .btn-scan { background: #0f3460; color: white; display: none; }
+    .btn-scan { background: #0f3460; color: white; }
     .btn-scan:hover { background: #16213e; }
     .btn-save { background: #2ecc71; color: white; display: none; }
     .btn-save:hover { background: #27ae60; }
-    .btn-retry { background: #533483; color: white; display: none; }
+    .btn-retry { background: #533483; color: white; }
     .btn-retry:hover { background: #3d2066; }
     .capture-label {
       width: 100%;
@@ -367,12 +386,15 @@ video {
       <button id="btnRotateRight" class="btn btn-rotate" type="button" onclick="window.rotateMeishi && window.rotateMeishi(90, event)">右に90°</button>
     </div>
     <div class="crop-tools" id="cropTools">
-      <button id="btnCropSquare" class="btn btn-crop" type="button">正方形で切る</button>
-      <button id="btnCropQuad" class="btn btn-crop" type="button">4点で切る</button>
+      <button id="btnAutoCrop" class="btn btn-autocrop" type="button" onclick="window.autoCropMeishi && window.autoCropMeishi(event)">自動で真四角</button>
+      <button id="btnCropSquare" class="btn btn-crop" type="button" onclick="window.openCropEditor && window.openCropEditor('square')">正方形で切る</button>
+      <button id="btnCropQuad" class="btn btn-crop" type="button" onclick="window.openCropEditor && window.openCropEditor('quad')">4点で切る</button>
     </div>
-    <button id="btnCaptureBack" class="btn btn-back">裏面も撮る</button>
-    <button id="btnScan" class="btn btn-scan">読み取り開始</button>
-    <button id="btnRetry" class="btn btn-retry">撮り直す</button>
+    <div class="action-tools" id="actionTools">
+      <button id="btnCaptureBack" class="btn btn-back" type="button" onclick="window.startBackCapture && window.startBackCapture(event)">裏面も撮る</button>
+      <button id="btnScan" class="btn btn-scan" type="button" onclick="window.startMeishiScan && window.startMeishiScan(event)">読み取り開始</button>
+      <button id="btnRetry" class="btn btn-retry" type="button" onclick="window.resetMeishiCamera && window.resetMeishiCamera(event)">撮り直す</button>
+    </div>
 
     <div id="loading" class="loading">処理中...名刺を読み取っています</div>
 
@@ -428,7 +450,7 @@ video {
   </div>
 
   <!-- secrets.js は gitignore。無い場合は app.js が警告を出す -->
-  <script src="secrets.js?v=20260318f"></script>
-  <script src="app.js?v=20260318f"></script>
+  <script src="secrets.js?v=20260318g"></script>
+  <script src="app.js?v=20260918a"></script>
 </body>
 </html>
