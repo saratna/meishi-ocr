@@ -263,18 +263,58 @@ function waitForVideoReady(timeoutMs) {
   });
 }
 
-function captureFrameFromVideo() {
-  const vw = video.videoWidth;
-  const vh = video.videoHeight;
+function getVideoTrackSize() {
+  try {
+    const stream = video.srcObject;
+    const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    if (!track) return null;
+    const s = track.getSettings ? track.getSettings() : {};
+    if (s.width && s.height) return { w: s.width, h: s.height };
+  } catch (e) { /* ignore */ }
+  return null;
+}
+
+async function captureFrameFromVideo() {
+  // Chrome/Android では ImageCapture が確実なことがある
+  try {
+    const stream = video.srcObject;
+    const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
+    if (track && typeof ImageCapture !== 'undefined') {
+      const ic = new ImageCapture(track);
+      const bitmap = await ic.grabFrame();
+      canvas.width = bitmap.width;
+      canvas.height = bitmap.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0);
+      if (bitmap.close) bitmap.close();
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      if (dataUrl && dataUrl !== 'data:,') return dataUrl.split(',')[1];
+    }
+  } catch (e) {
+    console.warn('ImageCapture fallback:', e);
+  }
+
+  let vw = video.videoWidth || 0;
+  let vh = video.videoHeight || 0;
   if (!vw || !vh) {
-    throw new Error('カメラ映像がまだ準備できていません。少し待ってからもう一度押してください。');
+    const ts = getVideoTrackSize();
+    if (ts) { vw = ts.w; vh = ts.h; }
+  }
+  if (!vw || !vh) {
+    // 最後の手段: 表示サイズから推定
+    const ratio = window.devicePixelRatio || 2;
+    vw = Math.max(640, Math.round((video.clientWidth || 640) * ratio));
+    vh = Math.max(480, Math.round((video.clientHeight || 480) * ratio));
   }
 
   canvas.width = vw;
   canvas.height = vh;
   const ctx = canvas.getContext('2d');
-  // willReadFrequently 不要。一部端末向けに描画を確定
-  ctx.drawImage(video, 0, 0, vw, vh);
+  try {
+    ctx.drawImage(video, 0, 0, vw, vh);
+  } catch (e) {
+    throw new Error('カメラ映像を画像化できませんでした: ' + e.message);
+  }
   const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
   if (!dataUrl || dataUrl === 'data:,') {
     throw new Error('画像の取得に失敗しました');
@@ -377,28 +417,31 @@ function showPostCaptureActions() {
 
 // ===== 撮影 =====
 btnCapture.addEventListener('click', async () => {
-  // 未起動・再試行・ストリームなしならカメラ起動
   const label = String(btnCapture.textContent || '');
-  if (!video.srcObject || label.indexOf('再試行') !== -1 || label.indexOf('起動中') !== -1) {
+
+  // 明示的に再試行のときだけ起動し直す（通常の撮影と混ぜない）
+  if (label.indexOf('再試行') !== -1 || !video.srcObject) {
     await startCamera();
     return;
   }
 
+  if (btnCapture.dataset.busy === '1') return;
+  btnCapture.dataset.busy = '1';
   btnCapture.disabled = true;
-  const prevLabel = btnCapture.textContent;
+  const prevLabel = label || '表面を撮影する';
   btnCapture.textContent = '撮影中...';
   captureLabel.textContent = '撮影しています...';
 
   try {
-    // まだ準備できていなければ短く待つ
+    // play() はハングすることがあるので待たない（最大1秒だけ試す）
     if (!video.videoWidth || !video.videoHeight) {
-      try {
-        await video.play();
-      } catch (e) { /* ignore */ }
-      await waitForVideoReady(5000);
+      await Promise.race([
+        video.play().catch(function () { return null; }),
+        sleep(1000)
+      ]);
     }
 
-    let base64 = captureFrameFromVideo();
+    let base64 = await captureFrameFromVideo();
 
     // 名刺は横長が標準。縦撮りなら自動で横向きへ
     const sideKey = captureSide === 'back' ? 'back' : 'front';
@@ -420,18 +463,18 @@ btnCapture.addEventListener('click', async () => {
     }
 
     showPostCaptureActions();
-    if (captureSide === 'back') {
-      captureLabel.textContent = '表・裏 撮影済み';
-    } else {
-      captureLabel.textContent = '表面 撮影済み（裏面は任意）';
-    }
+    captureLabel.textContent = captureSide === 'back'
+      ? '表・裏 撮影済み'
+      : '表面 撮影済み（裏面は任意）';
   } catch (err) {
-    captureLabel.textContent = '撮影に失敗しました';
-    alert(err.message || String(err));
+    console.error(err);
+    captureLabel.textContent = '撮影に失敗: ' + (err && err.message ? err.message : String(err));
+    alert('撮影に失敗しました: ' + (err && err.message ? err.message : String(err)));
     btnCapture.style.display = 'block';
-    btnCapture.textContent = prevLabel || '表面を撮影する';
+    btnCapture.textContent = prevLabel;
   } finally {
     btnCapture.disabled = false;
+    btnCapture.dataset.busy = '0';
   }
 });
 
