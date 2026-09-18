@@ -1,5 +1,9 @@
 // このファイルは GitHub に上がりません（.gitignore）
 // GAS の CONFIG.API_TOKEN にも、下の API_TOKEN と「同じ文字」を入れてください
+//
+// GAS_URL は「デプロイ → デプロイを管理」のウェブアプリURL
+//   正しい例: https://script.google.com/macros/s/XXXX/exec
+//   誤り例:   https://script.google.com/macros/library/d/...  ← これはライブラリ用
 
 window.MEISHI_OCR = {
   GAS_URL: 'https://script.google.com/macros/library/d/1nfilxF4dTWCQcWLQPqo29p9HQr5zz0esT7scenA4pJbg_FPzfP0ktCVC/8',
