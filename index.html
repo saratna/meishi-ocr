@@ -2,7 +2,8 @@
 <html lang="ja">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>名刺OCR</title>
   <link rel="manifest" href="manifest.json">
   <meta name="theme-color" content="#1a1a2e">
@@ -20,15 +21,20 @@
     }
     h1 {
       font-size: 1.5rem;
-      margin-bottom: 20px;
+      margin-bottom: 4px;
       color: #e94560;
+    }
+    .app-ver {
+      font-size: 0.75rem;
+      color: #666;
+      margin-bottom: 16px;
     }
     .camera-area {
       width: 100%;
       max-width: 400px;
       margin-bottom: 12px;
     }
-video {
+    #video {
       width: 100%;
       border-radius: 12px;
       display: block;
@@ -36,11 +42,7 @@ video {
       min-height: 220px;
       object-fit: cover;
     }
-    canvas {
-      width: 100%;
-      border-radius: 12px;
-      display: none;
-    }
+    #canvas { display: none; }
     .preview-img {
       width: 100%;
       border-radius: 12px;
@@ -58,16 +60,9 @@ video {
       margin-top: 8px;
       margin-bottom: 10px;
     }
-    .preview-pair.show {
-      display: flex;
-    }
-    .preview-pair > div {
-      flex: 1;
-      min-width: 0;
-    }
-    .preview-pair .preview-img {
-      margin-bottom: 0;
-    }
+    .preview-pair.show { display: flex; }
+    .preview-pair > div { flex: 1; min-width: 0; }
+    .preview-pair .preview-img { margin-bottom: 0; }
     .preview-side-label {
       font-size: 0.75rem;
       color: #888;
@@ -83,67 +78,51 @@ video {
       display: none;
     }
     .capture-hint.show { display: block; }
-    .btn-rotate {
-      background: #2a3f5f;
-      color: #e0e0e0;
-    }
-    .btn-rotate:hover { background: #35507a; }
-    .rotate-tools {
+    .error-banner {
       width: 100%;
       max-width: 400px;
       display: none;
-      gap: 8px;
+      background: #4a1520;
+      color: #ffd0d6;
+      border: 1px solid #e94560;
+      border-radius: 10px;
+      padding: 10px 12px;
       margin-bottom: 10px;
-    }
-    .rotate-tools.show { display: flex; }
-    .rotate-tools .btn {
-      flex: 1;
-      margin-bottom: 0;
-      padding: 14px 8px;
-      font-size: 0.95rem;
-      display: block;
-    }
-    .btn-crop {
-      background: #1f6f8b;
-      color: #fff;
-    }
-    .btn-crop:hover { background: #185a70; }
-    .btn-autocrop {
-      background: #0f766e;
-      color: #fff;
-    }
-    .btn-autocrop:hover { background: #0b5f59; }
-    .crop-tools {
-      width: 100%;
-      max-width: 400px;
-      display: none;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 10px;
-    }
-    .crop-tools.show { display: flex; }
-    .crop-tools .btn {
-      flex: 1 1 45%;
-      margin-bottom: 0;
-      padding: 12px 8px;
       font-size: 0.9rem;
-      display: block;
+      line-height: 1.4;
+      white-space: pre-wrap;
     }
+    .error-banner.show { display: block; }
+    .btn-rotate { background: #2a3f5f; color: #e0e0e0; }
+    .btn-rotate:hover { background: #35507a; }
+    .rotate-tools,
+    .crop-tools,
     .action-tools {
       width: 100%;
       max-width: 400px;
       display: none;
-      flex-direction: column;
       gap: 8px;
       margin-bottom: 10px;
     }
-    .action-tools.show { display: flex; }
+    .rotate-tools.show,
+    .crop-tools.show { display: flex; flex-wrap: wrap; }
+    .action-tools.show { display: flex; flex-direction: column; }
+    .rotate-tools .btn,
+    .crop-tools .btn,
     .action-tools .btn {
-      display: block;
+      flex: 1 1 45%;
       margin-bottom: 0;
+      padding: 14px 8px;
+      font-size: 0.95rem;
+      display: block !important;
     }
+    .action-tools .btn { flex: 1 1 auto; }
+    .action-tools .btn.is-hidden { display: none !important; }
+    .btn-crop { background: #1f6f8b; color: #fff; }
+    .btn-crop:hover { background: #185a70; }
+    .btn-autocrop { background: #0f766e; color: #fff; flex: 1 1 100% !important; }
+    .btn-autocrop:hover { background: #0b5f59; }
 
-    /* 切り取りエディタ */
     .crop-editor {
       display: none !important;
       position: fixed;
@@ -183,7 +162,7 @@ video {
     .crop-stage canvas {
       width: 100%;
       height: auto;
-      display: block;
+      display: block !important;
       border-radius: 8px;
       background: #000;
     }
@@ -203,16 +182,30 @@ video {
       font-weight: bold;
       cursor: pointer;
       margin-bottom: 10px;
-      transition: all 0.2s;
+      transition: background 0.2s;
+      touch-action: manipulation;
+      -webkit-tap-highlight-color: transparent;
     }
+    .btn:disabled { opacity: 0.7; }
     .btn-capture { background: #e94560; color: white; }
     .btn-capture:hover { background: #c81e45; }
+    .btn-file {
+      background: transparent;
+      color: #6cb6ff;
+      max-width: 400px;
+      padding: 6px;
+      font-size: 0.9rem;
+      font-weight: normal;
+      margin-top: -4px;
+    }
     .btn-back { background: #e6a817; color: #1a1a2e; }
     .btn-back:hover { background: #c9920f; }
     .btn-scan { background: #0f3460; color: white; }
     .btn-scan:hover { background: #16213e; }
-    .btn-save { background: #2ecc71; color: white; display: none; }
+    .btn-save { background: #2ecc71; color: white; }
     .btn-save:hover { background: #27ae60; }
+    #btnSave { display: none; }
+    #btnSave.show { display: block; }
     .btn-retry { background: #533483; color: white; }
     .btn-retry:hover { background: #3d2066; }
     .capture-label {
@@ -223,7 +216,6 @@ video {
       margin-bottom: 8px;
     }
     .search-card-detail a { color: #e94560; }
-
     .edit-form {
       width: 100%;
       max-width: 400px;
@@ -231,9 +223,7 @@ video {
       margin-top: 10px;
     }
     .edit-form.show { display: block; }
-    .form-group {
-      margin-bottom: 10px;
-    }
+    .form-group { margin-bottom: 10px; }
     .form-group label {
       display: block;
       font-size: 0.85rem;
@@ -253,15 +243,14 @@ video {
       outline: none;
       border-color: #e94560;
     }
-
     .loading {
       text-align: center;
       color: #e94560;
       font-weight: bold;
       display: none;
+      margin: 8px 0 12px;
     }
     .loading.show { display: block; }
-
     .status {
       width: 100%;
       max-width: 400px;
@@ -274,8 +263,6 @@ video {
     }
     .status.show { display: block; }
     .status h3 { color: #2ecc71; margin-bottom: 8px; }
-
-    /* 検索エリア */
     .search-area {
       width: 100%;
       max-width: 400px;
@@ -308,22 +295,9 @@ video {
       margin-bottom: 8px;
       border-left: 3px solid #e94560;
     }
-    .search-card-name {
-      font-weight: bold;
-      font-size: 1.05rem;
-      color: #e0e0e0;
-    }
-    .search-card-company {
-      font-size: 0.9rem;
-      color: #888;
-    }
-    .search-card-detail {
-      font-size: 0.85rem;
-      color: #666;
-      margin-top: 4px;
-    }
-
-    /* タブ */
+    .search-card-name { font-weight: bold; font-size: 1.05rem; color: #e0e0e0; }
+    .search-card-company { font-size: 0.9rem; color: #888; }
+    .search-card-detail { font-size: 0.85rem; color: #666; margin-top: 4px; }
     .tabs {
       display: flex;
       width: 100%;
@@ -342,63 +316,64 @@ video {
       cursor: pointer;
       border: none;
       font-size: 1rem;
+      touch-action: manipulation;
     }
-    .tab.active {
-      background: #e94560;
-      color: white;
-    }
+    .tab.active { background: #e94560; color: white; }
     .tab-content { display: none; width: 100%; max-width: 400px; }
     .tab-content.active { display: flex; flex-direction: column; align-items: center; }
+    #filePicker { display: none; }
   </style>
 </head>
 <body>
   <h1>名刺OCR</h1>
+  <p class="app-ver">v20260920</p>
 
   <div class="tabs">
-    <button class="tab active" data-tab="scan">スキャン</button>
-    <button class="tab" data-tab="search">検索</button>
+    <button class="tab active" type="button" data-tab="scan">スキャン</button>
+    <button class="tab" type="button" data-tab="search">検索</button>
   </div>
 
-  <!-- スキャンタブ -->
   <div id="tab-scan" class="tab-content active">
     <div class="capture-label" id="captureLabel">表面を撮影</div>
     <div class="capture-hint" id="captureHint">表は撮影済み。裏面を写して撮影してください</div>
+    <div class="error-banner" id="errorBanner"></div>
     <div class="camera-area">
       <video id="video" autoplay playsinline muted></video>
       <canvas id="canvas"></canvas>
     </div>
 
-    <button id="btnCapture" class="btn btn-capture" type="button" onclick="window.takeMeishiPhoto && window.takeMeishiPhoto(event)">表面を撮影する</button>
+    <button id="btnCapture" class="btn btn-capture" type="button">表面を撮影する</button>
+    <button id="btnPickFile" class="btn btn-file" type="button">アルバムから選ぶ</button>
+    <input id="filePicker" type="file" accept="image/*">
 
     <div class="preview-pair" id="previewPair">
       <div>
         <div class="preview-side-label">表</div>
         <img id="previewFront" class="preview-img" alt="名刺・表">
       </div>
-      <div id="previewBackWrap" style="display:none">
+      <div id="previewBackWrap" hidden>
         <div class="preview-side-label">裏</div>
         <img id="previewBack" class="preview-img" alt="名刺・裏">
       </div>
     </div>
 
     <div class="rotate-tools" id="rotateTools">
-      <button id="btnRotateLeft" class="btn btn-rotate" type="button" onclick="window.rotateMeishi && window.rotateMeishi(-90, event)">左に90°</button>
-      <button id="btnRotateRight" class="btn btn-rotate" type="button" onclick="window.rotateMeishi && window.rotateMeishi(90, event)">右に90°</button>
+      <button id="btnRotateLeft" class="btn btn-rotate" type="button">左に90°</button>
+      <button id="btnRotateRight" class="btn btn-rotate" type="button">右に90°</button>
     </div>
     <div class="crop-tools" id="cropTools">
-      <button id="btnAutoCrop" class="btn btn-autocrop" type="button" onclick="window.autoCropMeishi && window.autoCropMeishi(event)">自動で真四角</button>
-      <button id="btnCropSquare" class="btn btn-crop" type="button" onclick="window.openCropEditor && window.openCropEditor('square')">正方形で切る</button>
-      <button id="btnCropQuad" class="btn btn-crop" type="button" onclick="window.openCropEditor && window.openCropEditor('quad')">4点で切る</button>
+      <button id="btnAutoCrop" class="btn btn-autocrop" type="button">自動で真四角</button>
+      <button id="btnCropSquare" class="btn btn-crop" type="button">正方形で切る</button>
+      <button id="btnCropQuad" class="btn btn-crop" type="button">4点で切る</button>
     </div>
     <div class="action-tools" id="actionTools">
-      <button id="btnCaptureBack" class="btn btn-back" type="button" onclick="window.startBackCapture && window.startBackCapture(event)">裏面も撮る</button>
-      <button id="btnScan" class="btn btn-scan" type="button" onclick="window.startMeishiScan && window.startMeishiScan(event)">読み取り開始</button>
-      <button id="btnRetry" class="btn btn-retry" type="button" onclick="window.resetMeishiCamera && window.resetMeishiCamera(event)">撮り直す</button>
+      <button id="btnCaptureBack" class="btn btn-back" type="button">裏面も撮る</button>
+      <button id="btnScan" class="btn btn-scan" type="button">読み取り開始</button>
+      <button id="btnRetry" class="btn btn-retry" type="button">撮り直す</button>
     </div>
 
     <div id="loading" class="loading">処理中...名刺を読み取っています</div>
 
-    <!-- 編集フォーム -->
     <div id="editForm" class="edit-form">
       <div class="form-group"><label>氏名</label><input type="text" id="edit-name"></div>
       <div class="form-group"><label>ふりがな</label><input type="text" id="edit-furigana"></div>
@@ -414,17 +389,16 @@ video {
       <div class="form-group"><label>住所</label><input type="text" id="edit-address"></div>
       <div class="form-group"><label>ウェブページ</label><input type="url" id="edit-website"></div>
       <div class="form-group"><label>メモ</label><input type="text" id="edit-memo"></div>
-      <button id="btnSave" class="btn btn-save">この内容で登録する</button>
-      <button id="btnCancel" class="btn btn-retry">キャンセル</button>
+      <button id="btnSave" class="btn btn-save" type="button">この内容で登録する</button>
+      <button id="btnCancel" class="btn btn-retry" type="button">キャンセル</button>
     </div>
 
     <div id="status" class="status">
-      <h3>登録完了</h3>
+      <h3 id="statusTitle">登録完了</h3>
       <p id="statusMsg"></p>
     </div>
   </div>
 
-  <!-- 検索タブ -->
   <div id="tab-search" class="tab-content">
     <div class="search-area">
       <input type="text" id="searchInput" placeholder="名前・会社名・ふりがなで検索...">
@@ -436,7 +410,6 @@ video {
     <a href="token-generator.html" style="color:#6cb6ff;">トークン生成</a>
   </p>
 
-  <!-- 切り取りエディタ -->
   <div id="cropEditor" class="crop-editor" aria-hidden="true">
     <h2 id="cropTitle">切り取り</h2>
     <p class="crop-help" id="cropHelp"></p>
@@ -445,12 +418,11 @@ video {
     </div>
     <div class="crop-actions">
       <button id="btnCropApply" class="btn btn-save" type="button">この範囲で切り取る</button>
-      <button id="btnCropCancel" class="btn btn-retry" type="button" style="display:block">キャンセル</button>
+      <button id="btnCropCancel" class="btn btn-retry" type="button">キャンセル</button>
     </div>
   </div>
 
-  <!-- secrets.js は gitignore。無い場合は app.js が警告を出す -->
-  <script src="secrets.js?v=20260318g"></script>
-  <script src="app.js?v=20260918a"></script>
+  <script src="secrets.js?v=20260920a"></script>
+  <script src="app.js?v=20260920a"></script>
 </body>
 </html>

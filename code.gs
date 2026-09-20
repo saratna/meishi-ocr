@@ -56,10 +56,49 @@ function isValidToken(token) {
 
 // ===== スキャンのみ（編集用にデータを返す） =====
 function handleScan(imageFront, imageBack) {
-  const frontOcr = callVisionAPI(imageFront);
-  const backOcr = imageBack ? callVisionAPI(imageBack) : '';
-  const cardData = callGeminiAPI(imageFront, frontOcr, imageBack, backOcr);
-  const faceBox = detectFaceBox(imageFront);
+  if (!imageFront) {
+    return jsonResponse({ status: 'error', message: '表面画像がありません' });
+  }
+
+  var frontOcr = '';
+  var backOcr = '';
+  var visionNotes = [];
+  try {
+    frontOcr = callVisionAPI(imageFront);
+  } catch (e) {
+    visionNotes.push('表OCR: ' + e.toString());
+    Logger.log(visionNotes[visionNotes.length - 1]);
+  }
+  if (imageBack) {
+    try {
+      backOcr = callVisionAPI(imageBack);
+    } catch (e) {
+      visionNotes.push('裏OCR: ' + e.toString());
+      Logger.log(visionNotes[visionNotes.length - 1]);
+    }
+  }
+
+  var cardData;
+  try {
+    cardData = callGeminiAPI(imageFront, frontOcr, imageBack, backOcr);
+  } catch (e) {
+    return jsonResponse({
+      status: 'error',
+      message: 'AI読み取りに失敗しました: ' + e.toString()
+    });
+  }
+
+  var faceBox = null;
+  try {
+    faceBox = detectFaceBox(imageFront);
+  } catch (e) {
+    Logger.log('顔検出スキップ: ' + e.toString());
+  }
+
+  if (visionNotes.length && cardData && !cardData.memo) {
+    cardData.memo = '';
+  }
+
   return jsonResponse({
     status: 'success',
     data: cardData,
@@ -135,8 +174,14 @@ function handleScanAndSave(imageBase64) {
 
 // ===== 検索 =====
 function handleSearch(query) {
+  if (!CONFIG.SPREADSHEET_ID || CONFIG.SPREADSHEET_ID === 'YOUR_SPREADSHEET_URL') {
+    return jsonResponse({ status: 'error', message: 'SPREADSHEET_ID が未設定です' });
+  }
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+  if (!sheet) {
+    return jsonResponse({ status: 'error', message: 'シート「' + CONFIG.SHEET_NAME + '」が見つかりません' });
+  }
   const lastRow = sheet.getLastRow();
 
   if (lastRow < 2) {
@@ -185,6 +230,9 @@ function handleSearch(query) {
 
 // ===== Cloud Vision API =====
 function callVisionAPI(imageBase64) {
+  if (!CONFIG.VISION_API_KEY || CONFIG.VISION_API_KEY === 'YOUR_API_KEY') {
+    throw new Error('VISION_API_KEY が未設定です');
+  }
   const url = 'https://vision.googleapis.com/v1/images:annotate?key=' + CONFIG.VISION_API_KEY;
 
   const requestBody = {
@@ -197,13 +245,22 @@ function callVisionAPI(imageBase64) {
   const response = UrlFetchApp.fetch(url, {
     method: 'post',
     contentType: 'application/json',
-    payload: JSON.stringify(requestBody)
+    payload: JSON.stringify(requestBody),
+    muteHttpExceptions: true
   });
+  const code = response.getResponseCode();
+  const body = response.getContentText();
+  if (code < 200 || code >= 300) {
+    throw new Error('Vision HTTP ' + code + ' ' + String(body).substring(0, 180));
+  }
 
-  const result = JSON.parse(response.getContentText());
-
-  if (result.responses[0].fullTextAnnotation) {
-    return result.responses[0].fullTextAnnotation.text;
+  const result = JSON.parse(body);
+  const resp = result.responses && result.responses[0];
+  if (resp && resp.error) {
+    throw new Error('Vision: ' + (resp.error.message || JSON.stringify(resp.error)));
+  }
+  if (resp && resp.fullTextAnnotation) {
+    return resp.fullTextAnnotation.text;
   }
   return '';
 }
@@ -334,8 +391,30 @@ ${frontOcr}
   };
 
   const result = geminiFetch(requestBody);
-  const outText = result.candidates[0].content.parts[0].text;
-  return JSON.parse(outText);
+  const outText = result.candidates && result.candidates[0] &&
+    result.candidates[0].content && result.candidates[0].content.parts &&
+    result.candidates[0].content.parts[0] && result.candidates[0].content.parts[0].text;
+  if (!outText) {
+    throw new Error('Geminiから空の応答が返りました');
+  }
+  return parseGeminiJson(outText);
+}
+
+function parseGeminiJson(text) {
+  var raw = String(text || '').trim();
+  if (raw.indexOf('```') === 0) {
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '');
+  }
+  try {
+    return JSON.parse(raw);
+  } catch (e) {
+    var start = raw.indexOf('{');
+    var end = raw.lastIndexOf('}');
+    if (start >= 0 && end > start) {
+      return JSON.parse(raw.substring(start, end + 1));
+    }
+    throw new Error('GeminiのJSON解析に失敗: ' + raw.substring(0, 120));
+  }
 }
 
 // ===== 顔検出（Vision FACE_DETECTION） =====
@@ -426,8 +505,14 @@ function saveImageToDrive(imageBase64, cardData, side) {
 
 // ===== Google Sheets 書き込み =====
 function writeToSheet(cardData) {
+  if (!CONFIG.SPREADSHEET_ID || CONFIG.SPREADSHEET_ID === 'YOUR_SPREADSHEET_URL') {
+    throw new Error('SPREADSHEET_ID が未設定です');
+  }
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+  if (!sheet) {
+    throw new Error('シート「' + CONFIG.SHEET_NAME + '」が見つかりません');
+  }
 
   const now = new Date();
   const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
