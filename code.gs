@@ -679,6 +679,8 @@ function testListTags() {
     Logger.log((t.memberCount || 0) + ' : ' + t.name + ' / ' + t.resourceName);
   });
 }
+
+function testSetup() {
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
   Logger.log('シート接続OK: ' + sheet.getName());
