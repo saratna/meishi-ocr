@@ -1,5 +1,5 @@
-/* meishi-ocr frontend v20260920c */
-const APP_VERSION = '20260920c';
+/* meishi-ocr frontend v20260920d */
+const APP_VERSION = '20260920d';
 const GAS_URL = (window.MEISHI_OCR && window.MEISHI_OCR.GAS_URL) || 'YOUR_GAS_WEBAPP_URL';
 const API_TOKEN = (window.MEISHI_OCR && window.MEISHI_OCR.API_TOKEN) || 'YOUR_API_TOKEN';
 
@@ -1380,11 +1380,12 @@ async function loadContactTags() {
   }
 }
 
-function cropFaceFromFront(box) {
-  if (!box || !imageFront) return Promise.resolve('');
-  return loadImageFromBase64(imageFront).then((img) => {
-    const padX = Math.round((box.right - box.left) * 0.15);
-    const padY = Math.round((box.bottom - box.top) * 0.15);
+function cropFaceFromSide(box, side) {
+  const base64 = side === 'back' ? imageBack : imageFront;
+  if (!box || !base64) return Promise.resolve('');
+  return loadImageFromBase64(base64).then((img) => {
+    const padX = Math.round((box.right - box.left) * 0.18);
+    const padY = Math.round((box.bottom - box.top) * 0.22);
     const left = Math.max(0, box.left - padX);
     const top = Math.max(0, box.top - padY);
     const right = Math.min(img.width, box.right + padX);
@@ -1432,7 +1433,8 @@ async function startMeishiScan() {
       if (el) el.value = result.data[f.key] || '';
     });
     faceBox = result.faceBox || null;
-    faceImage = faceBox ? await cropFaceFromFront(faceBox) : '';
+    const faceSide = result.faceSide === 'back' ? 'back' : 'front';
+    faceImage = faceBox ? await cropFaceFromSide(faceBox, faceSide) : '';
     selectedTags = [];
     if (editRegisteredDate) editRegisteredDate.value = todayDateStr();
     editForm.classList.add('show');
@@ -1442,7 +1444,8 @@ async function startMeishiScan() {
     loadContactTags();
     if (faceImage) {
       statusTitle.textContent = '顔を検出';
-      statusMsg.textContent = '顔写真を検出しました。登録時に連絡先へ反映します。';
+      statusMsg.textContent = (faceSide === 'back' ? '裏面' : '表面') +
+        'の顔写真を検出しました。登録時に連絡先へ反映します。';
       statusBox.classList.add('show');
     } else {
       statusBox.classList.remove('show');

@@ -91,8 +91,11 @@ function handleScan(imageFront, imageBack) {
   }
 
   var faceBox = null;
+  var faceSide = '';
   try {
-    faceBox = detectFaceBox(imageFront);
+    var picked = pickFaceFromSides(imageFront, imageBack);
+    faceBox = picked.box;
+    faceSide = picked.side || '';
   } catch (e) {
     Logger.log('顔検出スキップ: ' + e.toString());
   }
@@ -104,7 +107,8 @@ function handleScan(imageFront, imageBack) {
   return jsonResponse({
     status: 'success',
     data: cardData,
-    faceBox: faceBox
+    faceBox: faceBox,
+    faceSide: faceSide
   });
 }
 
@@ -429,13 +433,38 @@ function parseGeminiJson(text) {
 }
 
 // ===== 顔検出（Vision FACE_DETECTION） =====
+function pickFaceFromSides(imageFront, imageBack) {
+  var front = imageFront ? detectFaceBox(imageFront) : null;
+  var back = imageBack ? detectFaceBox(imageBack) : null;
+  if (front && back) {
+    // 裏面の顔写真の方が大きいことが多い。わずかに大きい表は表を優先。
+    if (back.area > front.area * 1.08) {
+      return { box: stripFaceMeta(back), side: 'back' };
+    }
+    return { box: stripFaceMeta(front), side: 'front' };
+  }
+  if (back) return { box: stripFaceMeta(back), side: 'back' };
+  if (front) return { box: stripFaceMeta(front), side: 'front' };
+  return { box: null, side: '' };
+}
+
+function stripFaceMeta(face) {
+  if (!face) return null;
+  return {
+    left: face.left,
+    top: face.top,
+    right: face.right,
+    bottom: face.bottom
+  };
+}
+
 function detectFaceBox(imageBase64) {
   try {
     const url = 'https://vision.googleapis.com/v1/images:annotate?key=' + CONFIG.VISION_API_KEY;
     const requestBody = {
       requests: [{
         image: { content: imageBase64 },
-        features: [{ type: 'FACE_DETECTION', maxResults: 3 }]
+        features: [{ type: 'FACE_DETECTION', maxResults: 5 }]
       }]
     };
 
@@ -454,22 +483,25 @@ function detectFaceBox(imageBase64) {
     const faces = result.responses && result.responses[0] && result.responses[0].faceAnnotations;
     if (!faces || faces.length === 0) return null;
 
-    // 最大の顔を採用
+    // 最大の顔を採用（名刺の顔写真）
     var best = null;
-    var bestArea = 0;
+    var bestScore = 0;
     faces.forEach(function (face) {
-      const v = face.boundingPoly && face.boundingPoly.vertices;
-      if (!v || v.length < 2) return;
-      const xs = v.map(function (p) { return p.x || 0; });
-      const ys = v.map(function (p) { return p.y || 0; });
+      const poly = (face.fdBoundingPoly && face.fdBoundingPoly.vertices) ||
+        (face.boundingPoly && face.boundingPoly.vertices);
+      if (!poly || poly.length < 2) return;
+      const xs = poly.map(function (p) { return p.x || 0; });
+      const ys = poly.map(function (p) { return p.y || 0; });
       const left = Math.min.apply(null, xs);
       const right = Math.max.apply(null, xs);
       const top = Math.min.apply(null, ys);
       const bottom = Math.max.apply(null, ys);
       const area = Math.max(0, right - left) * Math.max(0, bottom - top);
-      if (area > bestArea) {
-        bestArea = area;
-        best = { left: left, top: top, right: right, bottom: bottom };
+      const conf = Number(face.detectionConfidence || face.landmarkingConfidence || 0.5);
+      const score = area * Math.max(0.2, conf);
+      if (score > bestScore) {
+        bestScore = score;
+        best = { left: left, top: top, right: right, bottom: bottom, area: area };
       }
     });
 
