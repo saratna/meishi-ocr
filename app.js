@@ -1,5 +1,5 @@
-/* meishi-ocr frontend v20260920a */
-const APP_VERSION = '20260920a';
+/* meishi-ocr frontend v20260920b */
+const APP_VERSION = '20260920b';
 const GAS_URL = (window.MEISHI_OCR && window.MEISHI_OCR.GAS_URL) || 'YOUR_GAS_WEBAPP_URL';
 const API_TOKEN = (window.MEISHI_OCR && window.MEISHI_OCR.API_TOKEN) || 'YOUR_API_TOKEN';
 
@@ -32,6 +32,7 @@ const captureHint = $('captureHint');
 const errorBanner = $('errorBanner');
 const btnCapture = $('btnCapture');
 const btnPickFile = $('btnPickFile');
+const cameraCapture = $('cameraCapture');
 const filePicker = $('filePicker');
 const btnCaptureBack = $('btnCaptureBack');
 const btnScan = $('btnScan');
@@ -68,6 +69,7 @@ let faceBox = null;
 let faceImage = '';
 let skipAutoLandscape = { front: false, back: false };
 let captureBusy = false;
+let cameraStarting = false;
 let rotateBusy = false;
 let cropBusy = false;
 let scanBusy = false;
@@ -166,17 +168,25 @@ async function gasFetch(payload) {
   return result;
 }
 
-function onClick(el, handler) {
+function bindTap(el, handler) {
   if (!el) return;
-  el.addEventListener('click', async (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    try {
-      await handler(ev);
-    } catch (err) {
-      showError(err);
+  let last = 0;
+  const run = function (ev) {
+    if (ev) {
+      try { ev.preventDefault(); } catch (e) { /* ignore */ }
+      try { ev.stopPropagation(); } catch (e) { /* ignore */ }
     }
-  });
+    const now = Date.now();
+    if (now - last < 500) return;
+    last = now;
+    Promise.resolve(handler(ev)).catch(function (err) { showError(err); });
+  };
+  el.addEventListener('click', run);
+  el.addEventListener('pointerup', run);
+}
+
+function onClick(el, handler) {
+  bindTap(el, handler);
 }
 
 function setToolsVisible(on) {
@@ -390,6 +400,8 @@ function waitForVideoReady(timeoutMs) {
 }
 
 async function startCamera() {
+  if (cameraStarting) return;
+  cameraStarting = true;
   btnCapture.disabled = false;
   btnCapture.textContent = 'カメラ起動中...';
   captureLabel.textContent = 'カメラ許可が出たら「許可」を押してください';
@@ -455,6 +467,7 @@ async function startCamera() {
   } finally {
     clearTimeout(safety);
     btnCapture.disabled = false;
+    cameraStarting = false;
   }
 }
 
@@ -474,7 +487,11 @@ async function captureFrameFromVideo() {
     const stream = video.srcObject;
     const track = stream && stream.getVideoTracks && stream.getVideoTracks()[0];
     if (track && typeof ImageCapture !== 'undefined') {
-      const bitmap = await new ImageCapture(track).grabFrame();
+      const bitmap = await withTimeout(
+        new ImageCapture(track).grabFrame(),
+        2000,
+        'ImageCapture timeout'
+      );
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
       canvas.getContext('2d').drawImage(bitmap, 0, 0);
@@ -493,7 +510,7 @@ async function captureFrameFromVideo() {
     if (ts) { vw = ts.w; vh = ts.h; }
   }
   if (!vw || !vh) {
-    throw new Error('カメラ映像がまだ準備できていません。少し待って再撮影してください');
+    throw new Error('カメラ映像がまだ準備できていません');
   }
   canvas.width = vw;
   canvas.height = vh;
@@ -526,34 +543,68 @@ async function applyCapturedImage(base64) {
     : '表面 撮影済み（裏面は任意）';
 }
 
-async function takePhoto() {
+function openNativeCamera() {
+  if (cameraCapture) {
+    cameraCapture.click();
+    return true;
+  }
+  if (filePicker) {
+    filePicker.click();
+    return true;
+  }
+  return false;
+}
+
+async function takePhoto(ev) {
+  if (ev) {
+    try { ev.preventDefault(); } catch (e) { /* ignore */ }
+  }
+  captureLabel.textContent = 'シャッター反応あり...';
   clearError();
-  const label = String(btnCapture.textContent || '');
-  if (label.indexOf('再試行') !== -1 || !video.srcObject) {
-    await startCamera();
+
+  if (captureBusy || cameraStarting) {
+    captureLabel.textContent = '処理中です。少し待ってからもう一度押してください';
     return;
   }
-  if (captureBusy) return;
   if (Date.now() - lastShotAt < 700) return;
   lastShotAt = Date.now();
   captureBusy = true;
   btnCapture.textContent = '撮影中...';
-  captureLabel.textContent = '撮影しています...';
+
   try {
+    if (!video.srcObject) {
+      await startCamera();
+    }
+
+    const ready = video.srcObject && (video.videoWidth > 0 || getVideoTrackSize());
+    if (!ready) {
+      captureLabel.textContent = 'ライブ映像がないので端末カメラを開きます';
+      btnCapture.textContent = captureSide === 'back' ? '裏面を撮影する' : '表面を撮影する';
+      captureBusy = false;
+      if (!openNativeCamera()) {
+        showError('カメラを使えません。下の「アルバムから選ぶ」を使ってください');
+      }
+      return;
+    }
+
     if (!video.videoWidth || !video.videoHeight) {
       await Promise.race([video.play().catch(() => null), sleep(800)]);
     }
+    captureLabel.textContent = '撮影しています...';
     const base64 = await captureFrameFromVideo();
     await applyCapturedImage(base64);
   } catch (err) {
     showError('撮影に失敗しました: ' + errText(err));
     btnCapture.style.display = 'block';
     btnCapture.textContent = captureSide === 'back' ? '裏面を撮影する' : '表面を撮影する';
+    captureBusy = false;
+    openNativeCamera();
   } finally {
     captureBusy = false;
     btnCapture.disabled = false;
   }
 }
+window.takeMeishiPhoto = takePhoto;
 
 async function handlePickedFile(file) {
   if (!file) return;
@@ -1213,6 +1264,7 @@ function onCropPointerMove(e) {
 }
 
 function onCropPointerUp(e) {
+  if (!cropState.drag) return;
   if (e) e.preventDefault();
   cropState.drag = null;
 }
@@ -1425,15 +1477,19 @@ document.querySelectorAll('.tab').forEach((tab) => {
 
 onClick(btnCapture, takePhoto);
 onClick(btnPickFile, () => filePicker.click());
-filePicker.addEventListener('change', async () => {
+async function onFileChosen(input) {
   try {
-    const file = filePicker.files && filePicker.files[0];
-    filePicker.value = '';
+    const file = input.files && input.files[0];
+    input.value = '';
     await handlePickedFile(file);
   } catch (err) {
     showError('画像の取り込みに失敗しました: ' + errText(err));
   }
-});
+}
+filePicker.addEventListener('change', () => onFileChosen(filePicker));
+if (cameraCapture) {
+  cameraCapture.addEventListener('change', () => onFileChosen(cameraCapture));
+}
 onClick(btnRotateLeft, () => rotateMeishi(-90));
 onClick(btnRotateRight, () => rotateMeishi(90));
 onClick(btnAutoCrop, autoCropMeishi);
@@ -1447,12 +1503,13 @@ onClick(btnSave, saveCard);
 onClick(btnCropCancel, closeCropEditor);
 onClick(btnCropApply, applyCrop);
 
+cropCanvas.addEventListener('pointerdown', onCropPointerDown);
 cropCanvas.addEventListener('mousedown', onCropPointerDown);
-window.addEventListener('mousemove', onCropPointerMove);
-window.addEventListener('mouseup', onCropPointerUp);
 cropCanvas.addEventListener('touchstart', onCropPointerDown, { passive: false });
-window.addEventListener('touchmove', onCropPointerMove, { passive: false });
-window.addEventListener('touchend', onCropPointerUp);
+window.addEventListener('pointermove', onCropPointerMove, { passive: false });
+window.addEventListener('mousemove', onCropPointerMove);
+window.addEventListener('pointerup', onCropPointerUp);
+window.addEventListener('mouseup', onCropPointerUp);
 
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);

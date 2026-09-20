@@ -321,12 +321,12 @@
     .tab.active { background: #e94560; color: white; }
     .tab-content { display: none; width: 100%; max-width: 400px; }
     .tab-content.active { display: flex; flex-direction: column; align-items: center; }
-    #filePicker { display: none; }
+    #filePicker, #cameraCapture { display: none; }
   </style>
 </head>
 <body>
   <h1>名刺OCR</h1>
-  <p class="app-ver">v20260920</p>
+  <p class="app-ver">v20260920b</p>
 
   <div class="tabs">
     <button class="tab active" type="button" data-tab="scan">スキャン</button>
@@ -342,8 +342,9 @@
       <canvas id="canvas"></canvas>
     </div>
 
-    <button id="btnCapture" class="btn btn-capture" type="button">表面を撮影する</button>
+    <button id="btnCapture" class="btn btn-capture" type="button" onclick="window.takeMeishiPhoto && window.takeMeishiPhoto(event)">表面を撮影する</button>
     <button id="btnPickFile" class="btn btn-file" type="button">アルバムから選ぶ</button>
+    <input id="cameraCapture" type="file" accept="image/*" capture="environment">
     <input id="filePicker" type="file" accept="image/*">
 
     <div class="preview-pair" id="previewPair">
@@ -422,7 +423,7 @@
     </div>
   </div>
 
-  <script src="secrets.js?v=20260920a"></script>
-  <script src="app.js?v=20260920a"></script>
+  <script src="secrets.js?v=20260920b"></script>
+  <script src="app.js?v=20260920b"></script>
 </body>
 </html>
