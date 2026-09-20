@@ -1,5 +1,5 @@
-/* meishi-ocr frontend v20260920b */
-const APP_VERSION = '20260920b';
+/* meishi-ocr frontend v20260920c */
+const APP_VERSION = '20260920c';
 const GAS_URL = (window.MEISHI_OCR && window.MEISHI_OCR.GAS_URL) || 'YOUR_GAS_WEBAPP_URL';
 const API_TOKEN = (window.MEISHI_OCR && window.MEISHI_OCR.API_TOKEN) || 'YOUR_API_TOKEN';
 
@@ -60,6 +60,10 @@ const statusTitle = $('statusTitle');
 const statusMsg = $('statusMsg');
 const searchInput = $('searchInput');
 const searchResults = $('searchResults');
+const tagList = $('tagList');
+const newTagInput = $('newTagInput');
+const btnAddTag = $('btnAddTag');
+const editRegisteredDate = $('edit-registeredDate');
 
 let captureSide = 'front';
 let lastCapturedSide = 'front';
@@ -76,6 +80,8 @@ let scanBusy = false;
 let saveBusy = false;
 let lastShotAt = 0;
 let lastRotateAt = 0;
+let tagCatalog = [];
+let selectedTags = [];
 
 const cropState = {
   mode: null,
@@ -1299,6 +1305,81 @@ async function applyCrop() {
   }
 }
 
+function todayDateStr() {
+  const d = new Date();
+  const z = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + '-' + z(d.getMonth() + 1) + '-' + z(d.getDate());
+}
+
+function isTagSelected(name) {
+  return selectedTags.indexOf(name) !== -1;
+}
+
+function toggleTag(name) {
+  if (!name) return;
+  const i = selectedTags.indexOf(name);
+  if (i >= 0) selectedTags.splice(i, 1);
+  else selectedTags.push(name);
+  renderTagList();
+}
+
+function addNewTag() {
+  const name = String((newTagInput && newTagInput.value) || '').trim();
+  if (!name) {
+    showError('追加するタグ名を入力してください');
+    return;
+  }
+  const exists = tagCatalog.some((t) => t.name === name);
+  if (!exists) {
+    tagCatalog.unshift({ name: name, resourceName: '', memberCount: -1 });
+  }
+  if (!isTagSelected(name)) selectedTags.push(name);
+  if (newTagInput) newTagInput.value = '';
+  clearError();
+  renderTagList();
+}
+
+function renderTagList() {
+  if (!tagList) return;
+  const ordered = tagCatalog.slice().sort((a, b) => {
+    const aNew = a.memberCount < 0 ? 1 : 0;
+    const bNew = b.memberCount < 0 ? 1 : 0;
+    if (aNew !== bNew) return bNew - aNew;
+    if (b.memberCount !== a.memberCount) return b.memberCount - a.memberCount;
+    return String(a.name).localeCompare(String(b.name), 'ja');
+  });
+  selectedTags.forEach((name) => {
+    if (!ordered.some((t) => t.name === name)) {
+      ordered.unshift({ name: name, memberCount: -1 });
+    }
+  });
+  if (!ordered.length) {
+    tagList.innerHTML = '<div class="tag-hint">タグはまだありません。下で新規追加できます。</div>';
+    return;
+  }
+  tagList.innerHTML = ordered.map((t) => {
+    const selected = isTagSelected(t.name) ? ' selected' : '';
+    const count = t.memberCount >= 0 ? '<span class="tag-count">' + t.memberCount + '</span>' : '';
+    return '<button type="button" class="tag-chip' + selected + '" data-name="' + escapeHtml(t.name) + '">' +
+      escapeHtml(t.name) + count + '</button>';
+  }).join('');
+}
+
+async function loadContactTags() {
+  try {
+    const result = await gasFetch({ action: 'tags' });
+    const rows = (result && result.data) || [];
+    const extras = tagCatalog.filter((t) => t.memberCount < 0 && !rows.some((r) => r.name === t.name));
+    tagCatalog = rows.concat(extras);
+    renderTagList();
+  } catch (err) {
+    if (tagList && !tagCatalog.length) {
+      tagList.innerHTML = '<div class="tag-hint">既存タグを取得できませんでした。新規追加はできます。<br>' +
+        escapeHtml(errText(err)) + '</div>';
+    }
+  }
+}
+
 function cropFaceFromFront(box) {
   if (!box || !imageFront) return Promise.resolve('');
   return loadImageFromBase64(imageFront).then((img) => {
@@ -1352,9 +1433,13 @@ async function startMeishiScan() {
     });
     faceBox = result.faceBox || null;
     faceImage = faceBox ? await cropFaceFromFront(faceBox) : '';
+    selectedTags = [];
+    if (editRegisteredDate) editRegisteredDate.value = todayDateStr();
     editForm.classList.add('show');
     btnSave.classList.add('show');
     captureLabel.textContent = '内容を確認して登録してください';
+    renderTagList();
+    loadContactTags();
     if (faceImage) {
       statusTitle.textContent = '顔を検出';
       statusMsg.textContent = '顔写真を検出しました。登録時に連絡先へ反映します。';
@@ -1381,6 +1466,8 @@ async function saveCard() {
     showError('氏名か会社名を入力してから登録してください');
     return;
   }
+  cardData.tags = selectedTags.slice();
+  cardData.registeredDate = (editRegisteredDate && editRegisteredDate.value) || todayDateStr();
   saveBusy = true;
   clearError();
   btnSave.classList.remove('show');
@@ -1452,6 +1539,8 @@ async function runSearch() {
           ${card.phone ? '📞 ' + escapeHtml(card.phone) + '<br>' : ''}
           ${card.email1 ? '✉ ' + escapeHtml(card.email1) + '<br>' : ''}
           ${card.address ? '📍 ' + escapeHtml(card.address) + '<br>' : ''}
+          ${card.registeredDate ? '📅 ' + escapeHtml(card.registeredDate) + '<br>' : ''}
+          ${card.tags ? '🏷 ' + escapeHtml(card.tags) + '<br>' : ''}
           ${card.frontImageUrl ? '<a href="' + escapeHtml(card.frontImageUrl) + '" target="_blank" rel="noopener">名刺表</a> ' : ''}
           ${card.backImageUrl ? '<a href="' + escapeHtml(card.backImageUrl) + '" target="_blank" rel="noopener">名刺裏</a>' : ''}
         </div>
@@ -1502,6 +1591,23 @@ onClick(btnCancel, resetCamera);
 onClick(btnSave, saveCard);
 onClick(btnCropCancel, closeCropEditor);
 onClick(btnCropApply, applyCrop);
+onClick(btnAddTag, addNewTag);
+if (tagList) {
+  tagList.addEventListener('click', (ev) => {
+    const chip = ev.target.closest ? ev.target.closest('.tag-chip') : null;
+    if (!chip) return;
+    ev.preventDefault();
+    toggleTag(chip.getAttribute('data-name'));
+  });
+}
+if (newTagInput) {
+  newTagInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      addNewTag();
+    }
+  });
+}
 
 cropCanvas.addEventListener('pointerdown', onCropPointerDown);
 cropCanvas.addEventListener('mousedown', onCropPointerDown);
@@ -1518,6 +1624,7 @@ searchInput.addEventListener('input', () => {
 
 showCameraFor('front');
 startCamera();
+loadContactTags();
 if (!window.MEISHI_OCR) {
   showError('secrets.js が読み込めません。GitHub Pages に secrets.js があるか確認してください');
 }

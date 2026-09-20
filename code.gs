@@ -32,6 +32,8 @@ function doPost(e) {
       return handleSave(data.data, data.image, data.imageBack, data.faceImage);
     } else if (action === 'search') {
       return handleSearch(data.query);
+    } else if (action === 'tags') {
+      return handleListTags();
     } else {
       // 旧互換：scan_and_save
       return handleScanAndSave(data.image);
@@ -147,6 +149,11 @@ function handleSave(cardData, imageFront, imageBack, faceImage) {
 
     if (resourceName) {
       applyContactPhotos(resourceName, faceImage, imageFront);
+      try {
+        applyContactTags(resourceName, cardData.tags);
+      } catch (tagErr) {
+        cardData.contactStatus = (cardData.contactStatus || '') + ' / タグ: ' + tagErr.toString();
+      }
     }
   } catch (e) {
     cardData.contactStatus = '連絡先同期エラー: ' + e.toString();
@@ -188,7 +195,7 @@ function handleSearch(query) {
     return jsonResponse({ status: 'success', data: [] });
   }
 
-  const dataRange = sheet.getRange(2, 1, lastRow - 1, 17).getValues();
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, 19).getValues();
   const queryLower = query.toLowerCase();
 
   const results = dataRange
@@ -201,7 +208,9 @@ function handleSearch(query) {
         row[5],  // 役職
         row[10], // メールアドレス1
         row[6],  // 携帯電話1
-        row[8]   // 電話番号
+        row[8],  // 電話番号
+        row[17], // タグ
+        row[18]  // 登録日
       ].join(' ').toLowerCase();
       return searchTarget.indexOf(queryLower) !== -1;
     })
@@ -222,7 +231,9 @@ function handleSearch(query) {
       website: row[13],
       memo: row[14],
       frontImageUrl: row[15] || '',
-      backImageUrl: row[16] || ''
+      backImageUrl: row[16] || '',
+      tags: row[17] || '',
+      registeredDate: row[18] || ''
     }));
 
   return jsonResponse({ status: 'success', data: results });
@@ -516,6 +527,7 @@ function writeToSheet(cardData) {
 
   const now = new Date();
   const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+  ensureSheetTagHeaders(sheet);
 
   sheet.appendRow([
     timestamp,
@@ -534,8 +546,121 @@ function writeToSheet(cardData) {
     cardData.website || '',
     cardData.memo || '',
     cardData.frontImageUrl || '',
-    cardData.backImageUrl || ''
+    cardData.backImageUrl || '',
+    normalizeTagNames(cardData.tags).join(', '),
+    cardData.registeredDate || Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd')
   ]);
+}
+
+function ensureSheetTagHeaders(sheet) {
+  const headers = sheet.getRange(1, 1, 1, 19).getValues()[0];
+  if (!headers[17]) sheet.getRange(1, 18).setValue('タグ');
+  if (!headers[18]) sheet.getRange(1, 19).setValue('登録日');
+}
+
+function normalizeTagNames(tags) {
+  var list = [];
+  if (Array.isArray(tags)) {
+    list = tags;
+  } else if (tags) {
+    list = String(tags).split(/[,、\n]/);
+  }
+  var seen = {};
+  var out = [];
+  list.forEach(function (t) {
+    var name = String(t || '').trim();
+    if (!name || seen[name]) return;
+    seen[name] = true;
+    out.push(name);
+  });
+  return out;
+}
+
+function handleListTags() {
+  try {
+    return jsonResponse({ status: 'success', data: listContactTags() });
+  } catch (e) {
+    return jsonResponse({ status: 'error', message: 'タグ取得に失敗: ' + e.toString() });
+  }
+}
+
+function isSystemContactGroup(group) {
+  var rn = (group && group.resourceName) || '';
+  if (rn === 'contactGroups/myContacts' ||
+      rn === 'contactGroups/all' ||
+      rn === 'contactGroups/starred' ||
+      rn === 'contactGroups/blocked' ||
+      rn.indexOf('contactGroups/chatBuddies') === 0) {
+    return true;
+  }
+  return group && group.groupType === 'SYSTEM_CONTACT_GROUP';
+}
+
+function listContactTags() {
+  var groups = [];
+  var pageToken = '';
+  do {
+    var params = {
+      pageSize: 1000,
+      groupFields: 'name,memberCount,groupType'
+    };
+    if (pageToken) params.pageToken = pageToken;
+    var res = People.ContactGroups.list(params);
+    var batch = (res && res.contactGroups) || [];
+    batch.forEach(function (g) {
+      if (!g || !g.name || isSystemContactGroup(g)) return;
+      groups.push({
+        name: g.name,
+        resourceName: g.resourceName || '',
+        memberCount: Number(g.memberCount || 0)
+      });
+    });
+    pageToken = (res && res.nextPageToken) || '';
+  } while (pageToken);
+
+  groups.sort(function (a, b) {
+    if (b.memberCount !== a.memberCount) return b.memberCount - a.memberCount;
+    return String(a.name).localeCompare(String(b.name), 'ja');
+  });
+  return groups;
+}
+
+function findContactGroupByName(name, groups) {
+  name = String(name || '').trim();
+  for (var i = 0; i < groups.length; i++) {
+    if (groups[i].name === name) return groups[i];
+  }
+  return null;
+}
+
+function createContactGroup(name) {
+  var created = People.ContactGroups.create({
+    contactGroup: { name: name }
+  });
+  var group = (created && created.contactGroup) ? created.contactGroup : created;
+  return {
+    name: (group && group.name) || name,
+    resourceName: group && group.resourceName,
+    memberCount: 0
+  };
+}
+
+function applyContactTags(personResourceName, tags) {
+  var names = normalizeTagNames(tags);
+  if (!personResourceName || names.length === 0) return;
+
+  var groups = listContactTags();
+  names.forEach(function (tagName) {
+    var group = findContactGroupByName(tagName, groups);
+    if (!group) {
+      group = createContactGroup(tagName);
+      groups.push(group);
+    }
+    if (!group.resourceName) return;
+    People.ContactGroups.Members.modify({
+      resourceNamesToAdd: [personResourceName]
+    }, group.resourceName);
+  });
 }
 
 // ===== JSON レスポンス =====
@@ -547,7 +672,13 @@ function jsonResponse(obj) {
 
 // ===== テスト =====
 // Apps Script エディタで testSetup を実行し、Drive権限の承認ダイアログが出たら許可する
-function testSetup() {
+function testListTags() {
+  const tags = listContactTags();
+  Logger.log('タグ件数: ' + tags.length);
+  tags.slice(0, 30).forEach(function (t) {
+    Logger.log((t.memberCount || 0) + ' : ' + t.name + ' / ' + t.resourceName);
+  });
+}
   const ss = SpreadsheetApp.openById(CONFIG.SPREADSHEET_ID);
   const sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
   Logger.log('シート接続OK: ' + sheet.getName());
@@ -1083,8 +1214,11 @@ function buildContactBody(data) {
   }
   if (urls.length > 0) body.urls = urls;
   
-  // メモ（名刺画像リンクも併記）
+  // メモ（名刺画像リンク・登録日・タグも併記）
   const bioParts = [];
+  if (data.registeredDate) bioParts.push('登録日: ' + data.registeredDate);
+  const tagNames = normalizeTagNames(data.tags);
+  if (tagNames.length) bioParts.push('タグ: ' + tagNames.join(', '));
   if (data.memo) bioParts.push(data.memo);
   if (data.frontImageUrl) bioParts.push('名刺表: ' + data.frontImageUrl);
   if (data.backImageUrl) bioParts.push('名刺裏: ' + data.backImageUrl);
