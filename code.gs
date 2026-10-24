@@ -1,9 +1,17 @@
-// meishi-ocr GAS  20261024b
-// この行が新しいほど最新。Apps Script に貼ったあと、ここを見て確認する。
-const CODE_VERSION = '20261024b';
+// meishi-ocr GAS  20261024c
+// 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
+var CODE_VERSION = '20261024c';
+
+function ShowCodeVersion() {
+  return CODE_VERSION;
+}
+
+function showCodeVersion() {
+  return CODE_VERSION;
+}
 
 // ===== 設定 =====
-const CONFIG = {
+var CONFIG = {
   VISION_API_KEY: 'YOUR_API_KEY',
   GEMINI_API_KEY: 'YOUR_API_KEY',
   // 固定バージョン名はいずれ消える。エイリアス＋API自動探索で追随する
@@ -67,11 +75,6 @@ function doGet(e) {
     return JSON.stringify(payload);
   }
   return jsonResponse(payload);
-}
-
-function showCodeVersion() {
-  Logger.log('meishi-ocr GAS ' + CODE_VERSION);
-  return CODE_VERSION;
 }
 
 function isValidToken(token) {
