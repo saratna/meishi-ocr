@@ -1,6 +1,6 @@
-// meishi-ocr GAS  20261024a
+// meishi-ocr GAS  20261024b
 // この行が新しいほど最新。Apps Script に貼ったあと、ここを見て確認する。
-const CODE_VERSION = '20261024a';
+const CODE_VERSION = '20261024b';
 
 // ===== 設定 =====
 const CONFIG = {
@@ -26,6 +26,9 @@ const CONFIG = {
 // ===== リクエスト受信 =====
 function doPost(e) {
   try {
+    if (!e || !e.postData || !e.postData.contents) {
+      return 'doPost はウェブアプリからのPOST専用です。バージョン確認は showCodeVersion を実行。CODE_VERSION=' + CODE_VERSION;
+    }
     const data = JSON.parse(e.postData.contents);
     if (!isValidToken(data.token)) {
       return jsonResponse({ status: 'error', message: 'Unauthorized' });
@@ -46,17 +49,24 @@ function doPost(e) {
       return handleScanAndSave(data.image);
     }
   } catch (error) {
+    if (!e || !e.postData) {
+      return 'doPostエラー: ' + error.toString();
+    }
     return jsonResponse({ status: 'error', message: error.toString() });
   }
 }
 
 function doGet(e) {
-  // 生存確認＋バージョン（データ操作なし）。トークン不要。
-  return jsonResponse({
+  var payload = {
     status: 'ok',
     name: 'meishi-ocr',
     version: CODE_VERSION
-  });
+  };
+  // エディタから実行すると ContentService が「不明なエラー」になる
+  if (!e) {
+    return JSON.stringify(payload);
+  }
+  return jsonResponse(payload);
 }
 
 function showCodeVersion() {
@@ -386,11 +396,22 @@ function preferredGeminiModels() {
   ).slice(0, 8);
 }
 
+function safeUrlFetch(url, options) {
+  try {
+    return UrlFetchApp.fetch(url, options || { muteHttpExceptions: true });
+  } catch (e) {
+    throw new Error('通信失敗: ' + e.toString());
+  }
+}
+
 function listLiveGeminiModels() {
+  if (!CONFIG.GEMINI_API_KEY || CONFIG.GEMINI_API_KEY === 'YOUR_API_KEY') {
+    throw new Error('GEMINI_API_KEY が未設定です');
+  }
   var names = [];
   var url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' +
     CONFIG.GEMINI_API_KEY + '&pageSize=80';
-  var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  var res = safeUrlFetch(url, { muteHttpExceptions: true });
   var code = res.getResponseCode();
   var body = res.getContentText();
   if (code < 200 || code >= 300) {
@@ -412,17 +433,26 @@ function tryGeminiModels(requestBody, models, maxAttempts) {
   var lastError = '';
   var tried = [];
   maxAttempts = maxAttempts || 2;
+  if (!CONFIG.GEMINI_API_KEY || CONFIG.GEMINI_API_KEY === 'YOUR_API_KEY') {
+    return { ok: false, data: null, lastError: 'GEMINI_API_KEY が未設定です', tried: tried };
+  }
 
   for (var mi = 0; mi < models.length; mi++) {
     var modelName = models[mi];
     tried.push(modelName);
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      var response = UrlFetchApp.fetch(geminiUrl(modelName), {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify(requestBody),
-        muteHttpExceptions: true
-      });
+      var response;
+      try {
+        response = safeUrlFetch(geminiUrl(modelName), {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify(requestBody),
+          muteHttpExceptions: true
+        });
+      } catch (e) {
+        lastError = modelName + ' / ' + e.toString();
+        break;
+      }
       var code = response.getResponseCode();
       var body = response.getContentText();
 
@@ -901,28 +931,23 @@ function testGeminiModel() {
     lines.push(String(msg));
   }
 
-  note('CODE_VERSION = ' + CODE_VERSION);
-  note('GEMINI_MODEL = ' + CONFIG.GEMINI_MODEL);
-  note('cached = ' + (getCachedGeminiModel() || '(なし)'));
-  note('preferred = ' + preferredGeminiModels().join(', '));
-
   try {
-    var live = listLiveGeminiModels();
-    note('live top = ' + live.join(', '));
-  } catch (e) {
-    note('list FAIL: ' + e.toString());
-  }
+    note('CODE_VERSION = ' + CODE_VERSION);
+    note('GEMINI_MODEL = ' + CONFIG.GEMINI_MODEL);
+    note('keySet = ' + !!(CONFIG.GEMINI_API_KEY && CONFIG.GEMINI_API_KEY !== 'YOUR_API_KEY'));
 
-  var ping = {
-    contents: [{ parts: [{ text: 'Reply with OK' }] }],
-    generationConfig: { temperature: 0 }
-  };
-  var result = tryGeminiModels(ping, preferredGeminiModels().slice(0, 5), 1);
-  if (result.ok) {
-    note('ping OK / working = ' + getCachedGeminiModel());
-  } else {
-    note('ping FAIL: ' + result.lastError);
-    note('tried = ' + (result.tried || []).join(', '));
+    var ping = {
+      contents: [{ parts: [{ text: 'Reply with OK' }] }],
+      generationConfig: { temperature: 0 }
+    };
+    var result = tryGeminiModels(ping, [CONFIG.GEMINI_MODEL || 'gemini-flash-latest'], 1);
+    if (result.ok) {
+      note('ping OK / working = ' + getCachedGeminiModel());
+    } else {
+      note('ping FAIL: ' + result.lastError);
+    }
+  } catch (e) {
+    note('TEST ERROR: ' + e.toString());
   }
   return lines.join('\n');
 }
