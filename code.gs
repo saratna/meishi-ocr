@@ -365,92 +365,98 @@ function clearCachedGeminiModel() {
   } catch (e) { /* ignore */ }
 }
 
-function listLiveGeminiModels() {
-  var names = [];
-  var pageToken = '';
-  for (var page = 0; page < 6; page++) {
-    var url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' +
-      CONFIG.GEMINI_API_KEY + '&pageSize=200';
-    if (pageToken) url += '&pageToken=' + encodeURIComponent(pageToken);
-    var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
-    var code = res.getResponseCode();
-    var body = res.getContentText();
-    if (code < 200 || code >= 300) {
-      throw new Error('モデル一覧 HTTP ' + code + ' ' + String(body).substring(0, 160));
-    }
-    var json = JSON.parse(body);
-    (json.models || []).forEach(function (m) {
-      var name = normalizeGeminiModelName(m.name);
-      var methods = m.supportedGenerationMethods || [];
-      if (!name || name.indexOf('gemini') !== 0) return;
-      if (methods.length && methods.indexOf('generateContent') === -1) return;
-      names.push(name);
-    });
-    pageToken = json.nextPageToken || '';
-    if (!pageToken) break;
-  }
-  names.sort(function (a, b) { return scoreGeminiModel(b) - scoreGeminiModel(a); });
-  return uniqueGeminiNames(names);
-}
-
-function resolveGeminiModels(forceRefresh) {
-  var preferred = uniqueGeminiNames(
-    [CONFIG.GEMINI_MODEL]
+function preferredGeminiModels() {
+  return uniqueGeminiNames(
+    [getCachedGeminiModel(), CONFIG.GEMINI_MODEL]
       .concat(CONFIG.GEMINI_MODEL_FALLBACKS || [])
       .concat(['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-pro-latest'])
-  );
-  var cached = forceRefresh ? '' : getCachedGeminiModel();
+  ).slice(0, 8);
+}
+
+function listLiveGeminiModels() {
+  var names = [];
+  var url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' +
+    CONFIG.GEMINI_API_KEY + '&pageSize=80';
+  var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+  var code = res.getResponseCode();
+  var body = res.getContentText();
+  if (code < 200 || code >= 300) {
+    throw new Error('モデル一覧 HTTP ' + code + ' ' + String(body).substring(0, 160));
+  }
+  var json = JSON.parse(body);
+  (json.models || []).forEach(function (m) {
+    var name = normalizeGeminiModelName(m.name);
+    var methods = m.supportedGenerationMethods || [];
+    if (!name || name.indexOf('gemini') !== 0) return;
+    if (methods.length && methods.indexOf('generateContent') === -1) return;
+    names.push(name);
+  });
+  names.sort(function (a, b) { return scoreGeminiModel(b) - scoreGeminiModel(a); });
+  return uniqueGeminiNames(names).slice(0, 8);
+}
+
+function tryGeminiModels(requestBody, models, maxAttempts) {
+  var lastError = '';
+  var tried = [];
+  maxAttempts = maxAttempts || 2;
+
+  for (var mi = 0; mi < models.length; mi++) {
+    var modelName = models[mi];
+    tried.push(modelName);
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      var response = UrlFetchApp.fetch(geminiUrl(modelName), {
+        method: 'post',
+        contentType: 'application/json',
+        payload: JSON.stringify(requestBody),
+        muteHttpExceptions: true
+      });
+      var code = response.getResponseCode();
+      var body = response.getContentText();
+
+      if (code >= 200 && code < 300) {
+        setCachedGeminiModel(modelName);
+        Logger.log('Gemini使用モデル: ' + modelName);
+        return { ok: true, data: JSON.parse(body), lastError: '', tried: tried };
+      }
+
+      lastError = 'HTTP ' + code + ' / モデル=' + modelName + ' / ' + body.substring(0, 180);
+
+      if (isRetryableGeminiError(code, body) && attempt < maxAttempts) {
+        Utilities.sleep(800 * attempt);
+        continue;
+      }
+      if (isGeminiModelGone(code, body) && getCachedGeminiModel() === modelName) {
+        clearCachedGeminiModel();
+      }
+      break;
+    }
+  }
+  return { ok: false, data: null, lastError: lastError, tried: tried };
+}
+
+function geminiFetch(requestBody) {
+  var first = tryGeminiModels(requestBody, preferredGeminiModels(), 2);
+  if (first.ok) return first.data;
+
   var live = [];
   try {
     live = listLiveGeminiModels();
   } catch (e) {
     Logger.log('Geminiモデル一覧取得失敗: ' + e);
   }
-  return uniqueGeminiNames([cached].concat(preferred).concat(live));
-}
-
-function geminiFetch(requestBody) {
-  var lastError = '';
-  var models = resolveGeminiModels(false);
-
-  for (var pass = 0; pass < 2; pass++) {
-    for (var mi = 0; mi < models.length; mi++) {
-      var modelName = models[mi];
-      for (var attempt = 1; attempt <= 3; attempt++) {
-        var response = UrlFetchApp.fetch(geminiUrl(modelName), {
-          method: 'post',
-          contentType: 'application/json',
-          payload: JSON.stringify(requestBody),
-          muteHttpExceptions: true
-        });
-        var code = response.getResponseCode();
-        var body = response.getContentText();
-
-        if (code >= 200 && code < 300) {
-          setCachedGeminiModel(modelName);
-          Logger.log('Gemini使用モデル: ' + modelName);
-          return JSON.parse(body);
-        }
-
-        lastError = 'HTTP ' + code + ' / モデル=' + modelName + ' / ' + body.substring(0, 250);
-
-        if (isRetryableGeminiError(code, body)) {
-          Utilities.sleep(1500 * attempt);
-          continue;
-        }
-
-        if (isGeminiModelGone(code, body) && getCachedGeminiModel() === modelName) {
-          clearCachedGeminiModel();
-        }
-        break;
-      }
-    }
-    if (pass === 0) {
-      models = resolveGeminiModels(true);
-    }
+  var seen = {};
+  (first.tried || []).forEach(function (n) { seen[n] = true; });
+  var extra = [];
+  live.forEach(function (n) {
+    if (!seen[n]) extra.push(n);
+  });
+  if (extra.length) {
+    var second = tryGeminiModels(requestBody, extra.slice(0, 5), 1);
+    if (second.ok) return second.data;
+    first.lastError = second.lastError || first.lastError;
   }
 
-  throw new Error('Geminiエラー（利用可能なモデルがありません）: ' + lastError);
+  throw new Error('Geminiエラー（利用可能なモデルがありません）: ' + first.lastError);
 }
 
 function callGeminiAPI(imageFront, frontOcr, imageBack, backOcr) {
@@ -874,28 +880,37 @@ function authorizeDrive() {
 }
 
 // ===== Geminiモデル確認（Apps Scriptでこの関数を実行） =====
+// ログは実行完了後に出る。重い全件探索はしない。
 function testGeminiModel() {
-  Logger.log('CONFIG.GEMINI_MODEL = ' + CONFIG.GEMINI_MODEL);
-  Logger.log('FALLBACKS = ' + JSON.stringify(CONFIG.GEMINI_MODEL_FALLBACKS || []));
-  Logger.log('cached = ' + getCachedGeminiModel());
-  try {
-    var live = listLiveGeminiModels();
-    Logger.log('live generateContent models (' + live.length + '): ' + live.slice(0, 20).join(', '));
-  } catch (e) {
-    Logger.log('list FAIL: ' + e.toString());
+  var lines = [];
+  function note(msg) {
+    Logger.log(msg);
+    lines.push(String(msg));
   }
 
-  const ping = {
+  note('GEMINI_MODEL = ' + CONFIG.GEMINI_MODEL);
+  note('cached = ' + (getCachedGeminiModel() || '(なし)'));
+  note('preferred = ' + preferredGeminiModels().join(', '));
+
+  try {
+    var live = listLiveGeminiModels();
+    note('live top = ' + live.join(', '));
+  } catch (e) {
+    note('list FAIL: ' + e.toString());
+  }
+
+  var ping = {
     contents: [{ parts: [{ text: 'Reply with OK' }] }],
     generationConfig: { temperature: 0 }
   };
-  try {
-    const result = geminiFetch(ping);
-    Logger.log('working model = ' + getCachedGeminiModel());
-    Logger.log('ping OK: ' + JSON.stringify(result).substring(0, 300));
-  } catch (e) {
-    Logger.log('ping FAIL: ' + e.toString());
+  var result = tryGeminiModels(ping, preferredGeminiModels().slice(0, 5), 1);
+  if (result.ok) {
+    note('ping OK / working = ' + getCachedGeminiModel());
+  } else {
+    note('ping FAIL: ' + result.lastError);
+    note('tried = ' + (result.tried || []).join(', '));
   }
+  return lines.join('\n');
 }
 // ===== CAMCARDデータ移行 =====
 function migrateCAMCARD() {
