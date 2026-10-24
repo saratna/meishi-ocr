@@ -1,10 +1,9 @@
-// meishi-ocr GAS  20261024d
+// meishi-ocr GAS  20261024e
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
-var CODE_VERSION = '20261024d';
+var CODE_VERSION = '20261024e';
 
 function ShowCodeVersion() {
   Logger.log('CODE_VERSION = ' + CODE_VERSION);
-  console.log('CODE_VERSION = ' + CODE_VERSION);
   return CODE_VERSION;
 }
 
@@ -343,6 +342,20 @@ function isRetryableGeminiError(code, body) {
     textBody.indexOf('try again') !== -1;
 }
 
+function isGeminiBillingError(code, body) {
+  if (code === 402) return true;
+  var text = String(body || '').toLowerCase();
+  return text.indexOf('prepayment credits are depleted') !== -1 ||
+    text.indexOf('credits are depleted') !== -1 ||
+    text.indexOf('billing') !== -1 && text.indexOf('depleted') !== -1 ||
+    text.indexOf('insufficient') !== -1 && text.indexOf('credit') !== -1;
+}
+
+function geminiBillingMessage() {
+  return 'Geminiのプリペイド残高が切れています。モデル名の問題ではありません。' +
+    ' https://aistudio.google.com/ でプロジェクトのクレジットを追加してください。';
+}
+
 function isGeminiModelGone(code, body) {
   if (code === 404) return true;
   var text = String(body || '').toLowerCase();
@@ -468,6 +481,10 @@ function tryGeminiModels(requestBody, models, maxAttempts) {
       }
 
       lastError = 'HTTP ' + code + ' / モデル=' + modelName + ' / ' + body.substring(0, 180);
+      if (isGeminiBillingError(code, body)) {
+        lastError = geminiBillingMessage() + ' (' + lastError + ')';
+        return { ok: false, data: null, lastError: lastError, tried: tried, billing: true };
+      }
 
       if (isRetryableGeminiError(code, body) && attempt < maxAttempts) {
         Utilities.sleep(800 * attempt);
@@ -485,6 +502,9 @@ function tryGeminiModels(requestBody, models, maxAttempts) {
 function geminiFetch(requestBody) {
   var first = tryGeminiModels(requestBody, preferredGeminiModels(), 2);
   if (first.ok) return first.data;
+  if (first.billing) {
+    throw new Error(first.lastError);
+  }
 
   var live = [];
   try {
@@ -948,6 +968,9 @@ function testGeminiModel() {
     var result = tryGeminiModels(ping, [CONFIG.GEMINI_MODEL || 'gemini-flash-latest'], 1);
     if (result.ok) {
       note('ping OK / working = ' + getCachedGeminiModel());
+    } else if (result.billing) {
+      note('ping FAIL: 残高切れ');
+      note(geminiBillingMessage());
     } else {
       note('ping FAIL: ' + result.lastError);
     }
