@@ -2,12 +2,15 @@
 const CONFIG = {
   VISION_API_KEY: 'YOUR_API_KEY',
   GEMINI_API_KEY: 'YOUR_API_KEY',
-  // まず使うモデル（混雑時は下の候補へ自動切替）
-  GEMINI_MODEL: 'gemini-3.5-flash',
+  // 固定バージョン名はいずれ消える。エイリアス＋API自動探索で追随する
+  GEMINI_MODEL: 'gemini-flash-latest',
   GEMINI_MODEL_FALLBACKS: [
-    'gemini-3.5-flash-lite',
-    'gemini-3.1-flash-lite',
-    'gemini-flash-latest'
+    'gemini-flash-lite-latest',
+    'gemini-pro-latest',
+    'gemini-3.8-flash',
+    'gemini-3.5-flash',
+    'gemini-2.5-flash',
+    'gemini-2.0-flash'
   ],
   SPREADSHEET_ID: 'YOUR_SPREADSHEET_URL',
   SHEET_NAME: '名刺DB',
@@ -280,10 +283,26 @@ function callVisionAPI(imageBase64) {
   return '';
 }
 
-// ===== Gemini API（モデル自動フォールバック付き） =====
+// ===== Gemini API（エイリアス＋公開モデル一覧から自動選択） =====
 function geminiUrl(modelName) {
   return 'https://generativelanguage.googleapis.com/v1beta/models/' +
-    modelName + ':generateContent?key=' + CONFIG.GEMINI_API_KEY;
+    normalizeGeminiModelName(modelName) + ':generateContent?key=' + CONFIG.GEMINI_API_KEY;
+}
+
+function normalizeGeminiModelName(name) {
+  return String(name || '').replace(/^models\//, '').trim();
+}
+
+function uniqueGeminiNames(arr) {
+  var seen = {};
+  var out = [];
+  (arr || []).forEach(function (name) {
+    var n = normalizeGeminiModelName(name);
+    if (!n || seen[n]) return;
+    seen[n] = true;
+    out.push(n);
+  });
+  return out;
 }
 
 function isRetryableGeminiError(code, body) {
@@ -296,42 +315,142 @@ function isRetryableGeminiError(code, body) {
     textBody.indexOf('try again') !== -1;
 }
 
+function isGeminiModelGone(code, body) {
+  if (code === 404) return true;
+  var text = String(body || '').toLowerCase();
+  return text.indexOf('not found') !== -1 ||
+    text.indexOf('not_found') !== -1 ||
+    text.indexOf('unknown model') !== -1 ||
+    text.indexOf('is not supported') !== -1 ||
+    text.indexOf('no longer available') !== -1 ||
+    text.indexOf('has been deprecated') !== -1;
+}
+
+function scoreGeminiModel(name) {
+  var n = String(name || '').toLowerCase();
+  var score = 0;
+  if (n === 'gemini-flash-latest') score += 600;
+  else if (n === 'gemini-flash-lite-latest') score += 540;
+  else if (n === 'gemini-pro-latest') score += 500;
+  else if (n.indexOf('flash-latest') !== -1) score += 480;
+  else if (n.indexOf('-latest') !== -1 && n.indexOf('flash') !== -1) score += 420;
+  else if (n.indexOf('flash') !== -1 && n.indexOf('lite') === -1 && n.indexOf('preview') === -1 && n.indexOf('exp') === -1) score += 320;
+  else if (n.indexOf('flash-lite') !== -1 && n.indexOf('preview') === -1) score += 260;
+  else if (n.indexOf('flash') !== -1) score += 200;
+  else if (n.indexOf('pro') !== -1 && n.indexOf('preview') === -1) score += 160;
+  else score += 40;
+  if (n.indexOf('preview') !== -1) score -= 80;
+  if (n.indexOf('exp') !== -1 || n.indexOf('experimental') !== -1) score -= 140;
+  if (n.indexOf('tts') !== -1 || n.indexOf('image') !== -1 || n.indexOf('robotics') !== -1) score -= 500;
+  return score;
+}
+
+function getCachedGeminiModel() {
+  try {
+    return PropertiesService.getScriptProperties().getProperty('GEMINI_WORKING_MODEL') || '';
+  } catch (e) {
+    return '';
+  }
+}
+
+function setCachedGeminiModel(name) {
+  try {
+    PropertiesService.getScriptProperties().setProperty('GEMINI_WORKING_MODEL', name);
+  } catch (e) { /* ignore */ }
+}
+
+function clearCachedGeminiModel() {
+  try {
+    PropertiesService.getScriptProperties().deleteProperty('GEMINI_WORKING_MODEL');
+  } catch (e) { /* ignore */ }
+}
+
+function listLiveGeminiModels() {
+  var names = [];
+  var pageToken = '';
+  for (var page = 0; page < 6; page++) {
+    var url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' +
+      CONFIG.GEMINI_API_KEY + '&pageSize=200';
+    if (pageToken) url += '&pageToken=' + encodeURIComponent(pageToken);
+    var res = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+    var code = res.getResponseCode();
+    var body = res.getContentText();
+    if (code < 200 || code >= 300) {
+      throw new Error('モデル一覧 HTTP ' + code + ' ' + String(body).substring(0, 160));
+    }
+    var json = JSON.parse(body);
+    (json.models || []).forEach(function (m) {
+      var name = normalizeGeminiModelName(m.name);
+      var methods = m.supportedGenerationMethods || [];
+      if (!name || name.indexOf('gemini') !== 0) return;
+      if (methods.length && methods.indexOf('generateContent') === -1) return;
+      names.push(name);
+    });
+    pageToken = json.nextPageToken || '';
+    if (!pageToken) break;
+  }
+  names.sort(function (a, b) { return scoreGeminiModel(b) - scoreGeminiModel(a); });
+  return uniqueGeminiNames(names);
+}
+
+function resolveGeminiModels(forceRefresh) {
+  var preferred = uniqueGeminiNames(
+    [CONFIG.GEMINI_MODEL]
+      .concat(CONFIG.GEMINI_MODEL_FALLBACKS || [])
+      .concat(['gemini-flash-latest', 'gemini-flash-lite-latest', 'gemini-pro-latest'])
+  );
+  var cached = forceRefresh ? '' : getCachedGeminiModel();
+  var live = [];
+  try {
+    live = listLiveGeminiModels();
+  } catch (e) {
+    Logger.log('Geminiモデル一覧取得失敗: ' + e);
+  }
+  return uniqueGeminiNames([cached].concat(preferred).concat(live));
+}
+
 function geminiFetch(requestBody) {
-  const models = [CONFIG.GEMINI_MODEL]
-    .concat(CONFIG.GEMINI_MODEL_FALLBACKS || [])
-    .filter(function (m, i, arr) { return m && arr.indexOf(m) === i; });
-
   var lastError = '';
+  var models = resolveGeminiModels(false);
 
-  for (var mi = 0; mi < models.length; mi++) {
-    var modelName = models[mi];
-    for (var attempt = 1; attempt <= 3; attempt++) {
-      var response = UrlFetchApp.fetch(geminiUrl(modelName), {
-        method: 'post',
-        contentType: 'application/json',
-        payload: JSON.stringify(requestBody),
-        muteHttpExceptions: true
-      });
-      var code = response.getResponseCode();
-      var body = response.getContentText();
+  for (var pass = 0; pass < 2; pass++) {
+    for (var mi = 0; mi < models.length; mi++) {
+      var modelName = models[mi];
+      for (var attempt = 1; attempt <= 3; attempt++) {
+        var response = UrlFetchApp.fetch(geminiUrl(modelName), {
+          method: 'post',
+          contentType: 'application/json',
+          payload: JSON.stringify(requestBody),
+          muteHttpExceptions: true
+        });
+        var code = response.getResponseCode();
+        var body = response.getContentText();
 
-      if (code >= 200 && code < 300) {
-        return JSON.parse(body);
+        if (code >= 200 && code < 300) {
+          setCachedGeminiModel(modelName);
+          Logger.log('Gemini使用モデル: ' + modelName);
+          return JSON.parse(body);
+        }
+
+        lastError = 'HTTP ' + code + ' / モデル=' + modelName + ' / ' + body.substring(0, 250);
+
+        if (isRetryableGeminiError(code, body)) {
+          Utilities.sleep(1500 * attempt);
+          continue;
+        }
+
+        if (isGeminiModelGone(code, body) && getCachedGeminiModel() === modelName) {
+          clearCachedGeminiModel();
+        }
+        break;
       }
-
-      lastError = 'HTTP ' + code + ' / モデル=' + modelName + ' / ' + body.substring(0, 250);
-
-      if (isRetryableGeminiError(code, body)) {
-        Utilities.sleep(1500 * attempt);
-        continue;
-      }
-
-      // 404などリトライ不可 → 次のモデルへ
-      break;
+    }
+    if (pass === 0) {
+      models = resolveGeminiModels(true);
     }
   }
 
-  throw new Error('Geminiエラー（混雑またはモデル不可）: ' + lastError);
+  throw new Error('Geminiエラー（利用可能なモデルがありません）: ' + lastError);
 }
 
 function callGeminiAPI(imageFront, frontOcr, imageBack, backOcr) {
@@ -758,10 +877,13 @@ function authorizeDrive() {
 function testGeminiModel() {
   Logger.log('CONFIG.GEMINI_MODEL = ' + CONFIG.GEMINI_MODEL);
   Logger.log('FALLBACKS = ' + JSON.stringify(CONFIG.GEMINI_MODEL_FALLBACKS || []));
-
-  const listUrl = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + CONFIG.GEMINI_API_KEY;
-  const listRes = UrlFetchApp.fetch(listUrl, { muteHttpExceptions: true });
-  Logger.log('models list HTTP ' + listRes.getResponseCode());
+  Logger.log('cached = ' + getCachedGeminiModel());
+  try {
+    var live = listLiveGeminiModels();
+    Logger.log('live generateContent models (' + live.length + '): ' + live.slice(0, 20).join(', '));
+  } catch (e) {
+    Logger.log('list FAIL: ' + e.toString());
+  }
 
   const ping = {
     contents: [{ parts: [{ text: 'Reply with OK' }] }],
@@ -769,6 +891,7 @@ function testGeminiModel() {
   };
   try {
     const result = geminiFetch(ping);
+    Logger.log('working model = ' + getCachedGeminiModel());
     Logger.log('ping OK: ' + JSON.stringify(result).substring(0, 300));
   } catch (e) {
     Logger.log('ping FAIL: ' + e.toString());

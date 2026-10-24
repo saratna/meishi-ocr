@@ -120,14 +120,18 @@ meishi-ocr/
 | Google Apps Script | 中継サーバー |
 | GitHub Pages | PWA ホスティング |
 
-## Gemini モデル（フォールバック）
+## Gemini モデル（名称変更に追随）
 
-1. `gemini-3.5-flash`（主）
-2. `gemini-3.5-flash-lite`
-3. `gemini-3.1-flash-lite`
-4. `gemini-flash-latest`
+固定のバージョン名（`gemini-3.5-flash` など）は廃止されることがあります。
+GAS は次の順で使えるモデルを探します。
 
-429 / 503 / 混雑時はリトライ後、次のモデルへ自動切替。
+1. 前回成功したモデル（Script Properties にキャッシュ）
+2. `gemini-flash-latest` などのエイリアス
+3. `CONFIG.GEMINI_MODEL_FALLBACKS` の候補
+4. API の `models.list` から `generateContent` 対応モデルを自動選択
+
+404 / 廃止時はキャッシュを捨てて再探索。429 / 503 / 混雑時はリトライ後、次のモデルへ。
+Apps Script で `testGeminiModel` を実行すると、今使えるモデル名がログに出ます。
 
 ## セットアップ手順
 
