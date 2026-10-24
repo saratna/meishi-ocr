@@ -1,13 +1,15 @@
-// meishi-ocr GAS  20261024c
+// meishi-ocr GAS  20261024d
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
-var CODE_VERSION = '20261024c';
+var CODE_VERSION = '20261024d';
 
 function ShowCodeVersion() {
+  Logger.log('CODE_VERSION = ' + CODE_VERSION);
+  console.log('CODE_VERSION = ' + CODE_VERSION);
   return CODE_VERSION;
 }
 
 function showCodeVersion() {
-  return CODE_VERSION;
+  return ShowCodeVersion();
 }
 
 // ===== 設定 =====
