@@ -5,7 +5,7 @@
 CAMCARD の代替として自作した名刺管理システム。
 Pixel のカメラで名刺を撮影し、OCR + AI で構造化抽出、Google Sheets に蓄積、Google 連絡先に自動同期する。
 
-フロントの現行バージョン: **v20260920d**（`index.html` 上部に表示）
+現行バージョン: **20261024a**（`code.gs` 先頭の `CODE_VERSION`、画面上部は PWA / GAS を併記）
 
 ## システム構成
 
@@ -155,7 +155,7 @@ Apps Script で `testGeminiModel` を実行すると、今使えるモデル名�
 ### 4. PWA
 1. `secrets.js` の `GAS_URL` と `API_TOKEN` を GAS と一致させる
 2. GitHub Pages（main / root）を有効化
-3. Pixel Chrome で開き、画面上部のバージョン（例: v20260920d）を確認
+3. Pixel Chrome で開き、画面上部のバージョン（例: PWA 20261024a / GAS 20261024a）を確認
 
 ## 入口トークン（API_TOKEN）
 

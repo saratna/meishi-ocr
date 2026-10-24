@@ -1,3 +1,7 @@
+// meishi-ocr GAS  20261024a
+// この行が新しいほど最新。Apps Script に貼ったあと、ここを見て確認する。
+const CODE_VERSION = '20261024a';
+
 // ===== 設定 =====
 const CONFIG = {
   VISION_API_KEY: 'YOUR_API_KEY',
@@ -47,8 +51,17 @@ function doPost(e) {
 }
 
 function doGet(e) {
-  // 生存確認のみ（データ操作なし）。トークン不要。
-  return jsonResponse({ status: 'ok' });
+  // 生存確認＋バージョン（データ操作なし）。トークン不要。
+  return jsonResponse({
+    status: 'ok',
+    name: 'meishi-ocr',
+    version: CODE_VERSION
+  });
+}
+
+function showCodeVersion() {
+  Logger.log('meishi-ocr GAS ' + CODE_VERSION);
+  return CODE_VERSION;
 }
 
 function isValidToken(token) {
@@ -888,6 +901,7 @@ function testGeminiModel() {
     lines.push(String(msg));
   }
 
+  note('CODE_VERSION = ' + CODE_VERSION);
   note('GEMINI_MODEL = ' + CONFIG.GEMINI_MODEL);
   note('cached = ' + (getCachedGeminiModel() || '(なし)'));
   note('preferred = ' + preferredGeminiModels().join(', '));

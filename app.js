@@ -1,5 +1,5 @@
-/* meishi-ocr frontend v20260920d */
-const APP_VERSION = '20260920d';
+/* meishi-ocr frontend v20261024a */
+const APP_VERSION = '20261024a';
 const GAS_URL = (window.MEISHI_OCR && window.MEISHI_OCR.GAS_URL) || 'YOUR_GAS_WEBAPP_URL';
 const API_TOKEN = (window.MEISHI_OCR && window.MEISHI_OCR.API_TOKEN) || 'YOUR_API_TOKEN';
 
@@ -1632,3 +1632,18 @@ if (!window.MEISHI_OCR) {
   showError('secrets.js が読み込めません。GitHub Pages に secrets.js があるか確認してください');
 }
 console.log('meishi-ocr', APP_VERSION);
+
+(function showVersions() {
+  var el = document.querySelector('.app-ver');
+  if (!el) return;
+  el.textContent = 'PWA ' + APP_VERSION;
+  if (!GAS_URL || GAS_URL === 'YOUR_GAS_WEBAPP_URL') return;
+  fetch(GAS_URL, { method: 'GET', redirect: 'follow' }).then(function (res) {
+    return res.text();
+  }).then(function (text) {
+    var data = JSON.parse(text);
+    if (data && data.version) {
+      el.textContent = 'PWA ' + APP_VERSION + ' / GAS ' + data.version;
+    }
+  }).catch(function () { /* 生存確認失敗は無視 */ });
+})();
