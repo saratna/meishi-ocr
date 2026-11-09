@@ -2,182 +2,109 @@
 
 ## 概要
 
-CAMCARD の代替として自作した名刺管理システム。
-Pixel のカメラで名刺を撮影し、OCR + AI で構造化抽出、Google Sheets に蓄積、Google 連絡先に自動同期する。
+Pixel のカメラで名刺を撮影し、**Cloud Vision OCR + Gemini 構造化抽出** → **Google Sheets / Drive** 保存 → **People API** で連絡先同期する PWA です。中継は **Google Apps Script（GAS）**。
 
-現行バージョン: **20261024a**（`code.gs` 先頭の `CODE_VERSION`、画面上部は PWA / GAS を併記）
+**現行バージョン:** PWA `20261109b` / GAS `20261109a`（画面上部に併記。不一致時は警告色）
 
 ## システム構成
 
 ```
-Pixel（PWA / GitHub Pages）→ Google Apps Script（中継サーバー）
-├→ Cloud Vision API（OCR / 顔検出・表裏）
-├→ Gemini（構造化抽出・モデル自動フォールバック）
-├→ Google Drive（名刺 表・裏 画像保存）
-├→ Google Sheets（名刺DB）
-└→ People API（連絡先同期・顔写真・ラベル／タグ）
+Pixel（PWA / GitHub Pages）→ GAS（中継）
+├→ Cloud Vision API（OCR / 顔検出）
+├→ Gemini（構造化抽出）
+├→ Google Drive（表・裏画像）
+├→ Google Sheets（名刺DB A〜S列）
+└→ People API（連絡先・写真・ラベル）
 ```
 
-## アーキテクチャ
+## クイックセットアップ（新版）
 
-### 三層構造
+### 1. GAS（10分程度）
 
-| 層 | 役割 | 技術 |
-|---|------|------|
-| OCR層 | 画像から生テキスト抽出 | Google Cloud Vision API |
-| 知性層 | 構造化抽出・文脈補正・ふりがな推測 | Gemini（混雑時は別モデルへ自動切替） |
-| DB層 | データ蓄積・検索・画像保存 | Google Sheets / Drive |
+1. [script.google.com](https://script.google.com) で新規プロジェクト
+2. **`code.gs` を全文貼り付け**（既存を Ctrl+A 削除してから）
+3. `appsscript.json.example` を参考に OAuth スコープを設定
+4. `CONFIG` に **Vision / Gemini の API キー**だけ入力（スプレッドシート・フォルダ ID は空で可）
+5. エディタで **`setupMeishiOcr`** を実行 → 権限承認  
+   - 名刺DBシート・Drive フォルダを自動作成  
+   - **API_TOKEN** を Script Properties に保存（ログに表示）
+6. **デプロイ → ウェブアプリ**（実行: 自分、アクセス: 全員）→ URL を控える
 
-### 設計思想
+### 2. PWA（端末）
 
-- **AIには考えさせろ、計算はさせるな** — 数値処理はスプレッドシートに任せ、AIは判断・分類・生成のみ
-- **OCR + VLM の二段構え** — Cloud Vision が文字を正確に読み、Gemini が文脈で補正
-- **APIキーはGAS側に隠蔽** — PWA（ブラウザ）にはキーを露出させない
-- **Gemini フォールバック** — receipt-ocr と同様、主モデルが混雑・不可のとき代替モデルへ自動切替
+1. GitHub Pages で `index.html` を開く
+2. **接続設定**に GAS の URL と API トークン（ログの値）を貼って保存  
+   → **localStorage のみ**（リポジトリに秘密情報を置かない）
+3. 撮影 → 自動切り取り → 読み取り
 
-## 機能一覧
+### 3. 既存利用者の移行
 
-### スキャン・登録
-- 背面カメラで名刺の**表面**を撮影（失敗時は「アルバムから選ぶ」も可）
-- 任意で「裏面も撮る」から裏面を追加撮影
-- 撮影後: 左右90°回転 / 自動で正面長方形補正 / 正方形切取 / 4点切取
-- 表＋裏の OCR を統合し、表で足りない項目を裏から補完
-- Cloud Vision で OCR、Gemini で構造化抽出
-- **顔検出は表・裏の両方**を見て、大きい方を連絡先写真にくり抜き
-- 登録前に編集・確認（氏名〜メモ）
-- **登録日**を手入力可能（既定は当日）
-- **Google連絡先ラベル（タグ）**を使用頻度順で表示、複数選択・新規追加可
-- Google Drive に表・裏画像を保存
-- Google Sheets に保存（画像URL・タグ・登録日付き）
-- Google 連絡先に自動同期（重複チェック付き）
+| 項目 | 手順 |
+|------|------|
+| トークン | 旧 `secrets.js` が公開されていた場合は **必ずローテート**（`setupMeishiOcr` で新トークン） |
+| PWA | 接続設定に新 URL・新トークンを保存（旧 `secrets.js` 不要） |
+| GAS | `code.gs` 差し替え → 保存 → **再デプロイ** |
+| データ | 名刺DB **A〜S列は互換**。新列は末尾のみ追加 |
 
-### 検索
-- 名前・ふりがな・会社名・部門・役職・メール・電話・タグ・登録日で検索
-- リアルタイム検索（500ms デバウンス）
-- 名刺表・裏の Drive リンク表示
+## セキュリティ
 
-### データ移行
-- CAMCARD エクスポートの自動整形移行
-- 電話番号先頭0消失の自動修正
-- ふりがな一括推測（Gemini バッチ）
+- **公開リポジトリに `GAS_URL` / `API_TOKEN` をコミットしない**（旧 `secrets.js` 方式は廃止）
+- API キーは GAS の CONFIG または Script Properties のみ
+- 過去にリポジトリへ載せたトークンは **無効化してローテート**（git 履歴の書き換えは不要）
 
-### Google 連絡先同期
-- People API で連絡先登録・更新
-- ラベル（タグ）を Contact Groups として付与
-- 顔写真＋名刺表リンク／メモ
-- バッチ同期（50件ずつ）対応
+## 精度改善（20261109）
 
-## 名刺DBカラム構成
+| 領域 | 変更 |
+|------|------|
+| OCR | `DOCUMENT_TEXT_DETECTION` 優先、日本語ヒント、`TEXT_DETECTION` フォールバック |
+| 抽出 | Gemini プロンプト強化（表裏統合・端の文字・携帯/固定の区別） |
+| 後処理 | `normalizeMeishiCard`（電話・メール・URL・郵便番号・ふりがな） |
+| 切り取り | 四隅検出後の **内側 inset(3%) を廃止** → **外側 outset(~2.2%)**、フォールバック余白縮小、エッジサンプル拡張 |
 
-| 列 | 項目 |
-|---|------|
-| A | 作成時間（システム記録） |
-| B | 氏名 |
-| C | ふりがな |
-| D | 会社名 |
-| E | 部門 |
-| F | 役職 |
-| G | 携帯電話1 |
-| H | 携帯電話2 |
-| I | 電話番号 |
-| J | FAX |
-| K | メールアドレス1 |
-| L | メールアドレス2 |
-| M | 住所 |
-| N | ウェブページ |
-| O | メモ |
-| P | 名刺表画像URL |
-| Q | 名刺裏画像URL |
-| R | タグ |
-| S | 登録日 |
+ローカル検証: `npm test`（`lib/card-normalize.js` / `lib/meishi-crop.js`）
 
-初回保存時にヘッダー R・S が無ければ自動で追加されます。
+## 端の読み取り切れ（切り取り）
+
+**想定原因（旧版）:** 検出四隅を `insetQuad(0.03)` で内側に寄せていたため、住所・URL など端の文字が射影補正後に欠けやすかった。
+
+**対策:** `lib/meishi-crop.js` で外側拡張・小さいフォールバック余白・枠線方向のエッジ補正。手動「4点で切る」の初期枠も 8% → 3% に変更。
 
 ## ファイル構成
 
 ```
 meishi-ocr/
-├── index.html              ... PWA フロント（UI）
-├── app.js                  ... PWA ロジック
-├── manifest.json           ... PWA マニフェスト
-├── code.gs                 ... GAS バックエンド（※GitHub上はキーをプレースホルダ）
-├── appsscript.json.example ... GAS マニフェスト例（oauthScopes）
-├── secrets.example.js      ... secrets.js のテンプレート
-├── secrets.js              ... 実値（Pages動作用にリポジトリへ配置済み）
-├── token-generator.html    ... API_TOKEN 生成ツール
-└── readme.md               ... このファイル
+├── index.html
+├── app.js
+├── config.js              … localStorage 接続設定
+├── lib/
+│   ├── card-normalize.js
+│   └── meishi-crop.js
+├── code.gs
+├── appsscript.json.example
+├── token-generator.html
+├── secrets.example.js     … 旧方式の参考のみ
+├── tests/
+└── readme.md
 ```
 
-## 利用API・サービス
+## 名刺DBカラム（A〜S）
 
-| サービス | 用途 |
-|---------|------|
-| Google Cloud Vision API | OCR・顔検出（表裏） |
-| Gemini（複数モデル） | 構造化抽出・ふりがな |
-| Google Drive | 名刺画像保存 |
-| Google Sheets | データ蓄積・検索 |
-| Google People API | 連絡先・写真・ラベル |
-| Google Apps Script | 中継サーバー |
-| GitHub Pages | PWA ホスティング |
+従来どおり。`ensureSheetTagHeaders` / `setupMeishiOcr` で R・S 列を自動補完。
 
-## Gemini モデル（名称変更に追随）
+## GAS 更新のしかた
 
-固定のバージョン名（`gemini-3.5-flash` など）は廃止されることがあります。
-GAS は次の順で使えるモデルを探します。
+1. `code.gs` をエディタに **全文貼り替え**
+2. 保存 → ウェブアプリ **新バージョンで再デプロイ**
+3. PWA 上部の **PWA / GAS バージョン**を確認
 
-1. 前回成功したモデル（Script Properties にキャッシュ）
-2. `gemini-flash-latest` などのエイリアス
-3. `CONFIG.GEMINI_MODEL_FALLBACKS` の候補
-4. API の `models.list` から `generateContent` 対応モデルを自動選択
+## 開発・テスト
 
-404 / 廃止時はキャッシュを捨てて再探索。429 / 503 / 混雑時はリトライ後、次のモデルへ。
-Apps Script で `testGeminiModel` を実行すると、今使えるモデル名がログに出ます。
+```bash
+npm test
+```
 
-## セットアップ手順
+**未検証（実機・実 API なし）:** Pixel カメラ動作、Vision/Gemini 実レスポンス、Drive 権限ダイアログ、People API 同期の E2E。
 
-### 1. Google Cloud Console
-1. プロジェクト作成
-2. Cloud Vision / Generative Language / Sheets / People API を有効化
-3. APIキー発行（Vision + Generative Language に制限推奨）
+## 利用 API
 
-### 2. Google Sheets / Drive
-1. スプレッドシート作成、「名刺DB」タブとヘッダー行
-2. 名刺画像用 Drive フォルダを作成し ID を控える
-
-### 3. Google Apps Script
-1. `code.gs` を貼り付け
-2. `CONFIG` に Vision / Gemini / Spreadsheet / Drive / `API_TOKEN` を設定
-3. People API サービスを追加
-4. `appsscript.json.example` を参考に oauthScopes を合わせる
-5. エディタで `authorizeDrive` / `testListTags` を実行して権限承認
-6. **ウェブアプリを新バージョンで再デプロイ**（アクセス: 全員）
-
-### 4. PWA
-1. `secrets.js` の `GAS_URL` と `API_TOKEN` を GAS と一致させる
-2. GitHub Pages（main / root）を有効化
-3. Pixel Chrome で開き、画面上部のバージョン（例: PWA 20261024a / GAS 20261024a）を確認
-
-## 入口トークン（API_TOKEN）
-
-- GAS: `CONFIG.API_TOKEN`
-- フロント: `secrets.js` の `API_TOKEN`
-- 未設定のままだと GAS は `Unauthorized`
-- `doGet`（生存確認）だけトークン不要
-
-## GAS アクション一覧
-
-| action | 内容 |
-|--------|------|
-| `scan` | OCR + Gemini + 顔検出（表裏） |
-| `save` | Drive / Sheets / 連絡先 / タグ |
-| `search` | 名刺DB検索 |
-| `tags` | 連絡先ラベル一覧（使用頻度順） |
-
-## 注意事項
-
-- `code.gs` 内の API キー実値は公開リポジトリに書かない（プレースホルダのまま）
-- `secrets.js` は Pages 動作用に追跡されています。漏洩に注意し、トークン漏れたら即ローテート
-- People API の連絡先写真スロットは実質1つ。顔がある場合は顔を優先し、名刺表は Drive / リンクで保持
-- 同姓同名は連絡先が上書きされるリスクあり
-- フロント更新後はスマホで強制再読み込み（キャッシュ）
-- **タグ・裏顔検出など GAS 変更は、エディタへの貼り付け＋再デプロイが必須**
+Cloud Vision、Gemini、Drive、Sheets、People API、Apps Script Web App

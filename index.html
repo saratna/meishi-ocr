@@ -320,8 +320,8 @@
     .status h3 { color: #2ecc71; margin-bottom: 8px; }
     .search-area {
       width: 100%;
-      max-width: 400px;
-      margin-bottom: 20px;
+      max-width: 760px;
+      margin-bottom: 14px;
     }
     .search-area input {
       width: 100%;
@@ -338,21 +338,194 @@
     }
     .search-results {
       width: 100%;
-      max-width: 400px;
+      max-width: 760px;
       display: none;
       margin-bottom: 20px;
     }
     .search-results.show { display: block; }
+    .search-summary {
+      color: #9ca3b5;
+      font-size: 0.82rem;
+      margin: 2px 2px 12px;
+    }
+    .card-gallery {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
     .search-card {
       background: #16213e;
-      border-radius: 10px;
-      padding: 12px;
-      margin-bottom: 8px;
-      border-left: 3px solid #e94560;
+      border: 1px solid #2a3552;
+      border-radius: 16px;
+      padding: 0;
+      overflow: hidden;
+      color: inherit;
+      text-align: left;
+      width: 100%;
+      cursor: pointer;
+      transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+      -webkit-tap-highlight-color: transparent;
     }
-    .search-card-name { font-weight: bold; font-size: 1.05rem; color: #e0e0e0; }
-    .search-card-company { font-size: 0.9rem; color: #888; }
-    .search-card-detail { font-size: 0.85rem; color: #666; margin-top: 4px; }
+    .search-card:hover { border-color: #e94560; transform: translateY(-2px); box-shadow: 0 14px 32px rgba(5, 9, 22, 0.32); }
+    .search-card:active { transform: scale(0.985); }
+    .search-card:focus-visible { outline: 3px solid #6cb6ff; outline-offset: 3px; }
+    .search-card-image {
+      width: 100%;
+      aspect-ratio: 1.58 / 1;
+      display: block;
+      object-fit: contain;
+      background: #0b1020;
+    }
+    .search-card-image-placeholder {
+      width: 100%;
+      aspect-ratio: 1.58 / 1;
+      display: grid;
+      place-items: center;
+      background: #10182d;
+      color: #75809a;
+      font-size: 0.82rem;
+      letter-spacing: 0.04em;
+    }
+    .search-card-copy { display: block; padding: 14px 15px 16px; }
+    .search-card-topline { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .search-card-name { display: block; font-weight: bold; font-size: 1.05rem; color: #e0e0e0; }
+    .search-card-company { display: block; font-size: 0.9rem; color: #a0a7b8; margin-top: 4px; min-height: 1.3em; }
+    .search-card-date { flex: none; font-size: 0.72rem; color: #737e95; font-variant-numeric: tabular-nums; }
+    .search-card-tags { display: block; font-size: 0.78rem; color: #d99aae; margin-top: 10px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+    .search-card-detail { font-size: 0.85rem; color: #8f98aa; margin-top: 4px; line-height: 1.6; }
+    .empty-search-card {
+      padding: 34px 20px;
+      border: 1px solid #2a3552;
+      border-radius: 16px;
+      background: #16213e;
+      text-align: center;
+    }
+    .card-detail-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 900;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background: rgba(5, 8, 18, 0.84);
+      backdrop-filter: blur(8px);
+    }
+    .card-detail-backdrop.show { display: flex; }
+    .card-detail-panel {
+      width: min(760px, 100%);
+      max-height: 92dvh;
+      overflow: auto;
+      background: #121a30;
+      border: 1px solid #303c5d;
+      border-radius: 20px;
+      box-shadow: 0 28px 80px rgba(0, 0, 0, 0.5);
+    }
+    .card-detail-header {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 18px 20px;
+      background: rgba(18, 26, 48, 0.96);
+      border-bottom: 1px solid #2a3552;
+    }
+    .card-detail-kicker { color: #e94560; font-size: 0.72rem; letter-spacing: 0.12em; margin-bottom: 4px; }
+    .card-detail-header h2 { font-size: 1.25rem; line-height: 1.3; }
+    .card-detail-close {
+      flex: none;
+      width: 42px;
+      height: 42px;
+      border: 0;
+      border-radius: 12px;
+      background: #202b47;
+      color: #e8ebf2;
+      font-size: 1.5rem;
+      cursor: pointer;
+    }
+    .card-detail-body { padding: 20px; }
+    .detail-image-stage {
+      width: 100%;
+      padding: 0;
+      border-radius: 14px;
+      overflow: hidden;
+      background: #090e1c;
+      border: 1px solid #2d3855;
+      color: inherit;
+      font: inherit;
+    }
+    button.detail-image-stage { cursor: pointer; }
+    .detail-image-stage img { width: 100%; max-height: 440px; aspect-ratio: 1.58 / 1; display: block; object-fit: contain; }
+    .detail-image-stage .search-card-image-placeholder { aspect-ratio: 1.58 / 1; }
+    .detail-side-switch { display: flex; gap: 8px; margin-top: 12px; }
+    .detail-side-switch button {
+      flex: 1;
+      padding: 11px;
+      border: 1px solid #36415f;
+      border-radius: 10px;
+      background: #18223b;
+      color: #9aa4b7;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .detail-side-switch button.active { background: #e94560; border-color: #e94560; color: #fff; }
+    .detail-original-link { display: inline-block; margin-top: 10px; color: #6cb6ff; font-size: 0.82rem; }
+    .detail-fields { margin: 22px 0 0; }
+    .detail-field { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 14px; padding: 12px 0; border-top: 1px solid #27324d; }
+    .detail-field dt { color: #818ba0; font-size: 0.8rem; }
+    .detail-field dd { margin: 0; color: #e4e7ed; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+    #tab-search { max-width: 760px; }
+    #tab-scan.reviewing .preview-pair {
+      position: sticky;
+      top: 8px;
+      z-index: 20;
+      padding: 8px;
+      border: 1px solid #34415f;
+      border-radius: 14px;
+      background: rgba(18, 26, 48, 0.96);
+      box-shadow: 0 12px 30px rgba(4, 8, 20, 0.4);
+      backdrop-filter: blur(8px);
+    }
+    #tab-scan.reviewing .preview-img { max-height: 180px; }
+    .review-hint { color: #aeb5c3; font-size: 0.85rem; line-height: 1.55; margin: 4px 0 14px; }
+    .setup-panel {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      background: rgba(8, 10, 18, 0.88);
+      padding: 20px;
+      overflow-y: auto;
+      align-items: flex-start;
+      justify-content: center;
+    }
+    .setup-panel.show { display: flex; }
+    .setup-panel.blocking .setup-card { border-color: #e94560; }
+    .setup-card {
+      width: 100%;
+      max-width: 420px;
+      background: #16213e;
+      border: 1px solid #2a3555;
+      border-radius: 16px;
+      padding: 18px 16px 20px;
+      margin-top: 12px;
+    }
+    .setup-card h2 { color: #e94560; font-size: 1.15rem; margin-bottom: 8px; }
+    .setup-card p { color: #aeb5c3; font-size: 0.88rem; line-height: 1.55; margin-bottom: 12px; }
+    .setup-card label { display: block; font-size: 0.82rem; color: #c5cad6; margin: 10px 0 4px; }
+    .setup-card input {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #3a4568;
+      background: #0d1526;
+      color: #e8ebf2;
+      font-size: 0.92rem;
+    }
+    .setup-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; }
     .tabs {
       display: flex;
       width: 100%;
@@ -377,15 +550,22 @@
     .tab-content { display: none; width: 100%; max-width: 400px; }
     .tab-content.active { display: flex; flex-direction: column; align-items: center; }
     #filePicker, #cameraCapture { display: none; }
+    @media (max-width: 620px) {
+      .card-gallery { grid-template-columns: 1fr; gap: 14px; }
+      .card-detail-backdrop { padding: 0; align-items: flex-end; }
+      .card-detail-panel { width: 100%; max-height: 95dvh; border-radius: 20px 20px 0 0; }
+      .detail-field { grid-template-columns: 5.5rem minmax(0, 1fr); }
+      #tab-scan.reviewing .preview-img { max-height: 120px; }
+    }
   </style>
 </head>
 <body>
   <h1>名刺OCR</h1>
-  <p class="app-ver">v20261024a</p>
+  <p class="app-ver">v20261109b</p>
 
   <div class="tabs">
     <button class="tab active" type="button" data-tab="scan">スキャン</button>
-    <button class="tab" type="button" data-tab="search">検索</button>
+    <button class="tab" type="button" data-tab="search">名刺帳</button>
   </div>
 
   <div id="tab-scan" class="tab-content active">
@@ -431,6 +611,7 @@
     <div id="loading" class="loading">処理中...名刺を読み取っています</div>
 
     <div id="editForm" class="edit-form">
+      <p class="review-hint">名刺画像と照らし合わせながら、読み取り結果を確認・修正してください。</p>
       <div class="form-group"><label>氏名</label><input type="text" id="edit-name"></div>
       <div class="form-group"><label>ふりがな</label><input type="text" id="edit-furigana"></div>
       <div class="form-group"><label>会社名</label><input type="text" id="edit-company"></div>
@@ -470,14 +651,47 @@
 
   <div id="tab-search" class="tab-content">
     <div class="search-area">
-      <input type="text" id="searchInput" placeholder="名前・会社名・ふりがなで検索...">
+      <input type="search" id="searchInput" placeholder="名前・会社・タグ・登録日で絞り込み" aria-label="保存した名刺を検索">
     </div>
-    <div id="searchResults" class="search-results"></div>
+    <div id="searchResults" class="search-results" aria-live="polite"></div>
+  </div>
+
+  <div id="cardDetail" class="card-detail-backdrop" aria-hidden="true">
+    <section class="card-detail-panel" role="dialog" aria-modal="true" aria-labelledby="cardDetailTitle">
+      <header class="card-detail-header">
+        <div>
+          <div class="card-detail-kicker">SAVED CARD</div>
+          <h2 id="cardDetailTitle">名刺詳細</h2>
+        </div>
+        <button id="cardDetailClose" class="card-detail-close" type="button" aria-label="詳細を閉じる">×</button>
+      </header>
+      <div id="cardDetailBody" class="card-detail-body"></div>
+    </section>
   </div>
 
   <p style="margin-top:24px;font-size:0.85rem;color:#666;text-align:center;">
+    <a href="#" id="openSetup" style="color:#6cb6ff;">接続設定</a>
+    ·
     <a href="token-generator.html" style="color:#6cb6ff;">トークン生成</a>
   </p>
+
+  <div id="setupPanel" class="setup-panel" aria-hidden="true">
+    <div class="setup-card" role="dialog" aria-labelledby="setupTitle">
+      <h2 id="setupTitle">接続設定</h2>
+      <p>
+        公開リポジトリに秘密情報を置かないため、GAS のウェブアプリ URL と API トークンはこの端末だけに保存します（localStorage）。
+        <code>setupMeishiOcr</code> 実行後のログに表示される値を貼り付けてください。
+      </p>
+      <label for="setupGasUrl">GAS デプロイ URL</label>
+      <input id="setupGasUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/.../exec">
+      <label for="setupApiToken">API トークン</label>
+      <input id="setupApiToken" type="password" autocomplete="off" placeholder="ランダムな長い文字列">
+      <div class="setup-actions">
+        <button id="setupSave" class="btn btn-save" type="button">保存して使う</button>
+        <button id="setupClose" class="btn btn-retry" type="button">閉じる</button>
+      </div>
+    </div>
+  </div>
 
   <div id="cropEditor" class="crop-editor" aria-hidden="true">
     <h2 id="cropTitle">切り取り</h2>
@@ -491,7 +705,9 @@
     </div>
   </div>
 
-  <script src="secrets.js?v=20261024a"></script>
-  <script src="app.js?v=20261024a"></script>
+  <script src="config.js?v=20261109b"></script>
+  <script src="lib/card-normalize.js?v=20261109b"></script>
+  <script src="lib/meishi-crop.js?v=20261109b"></script>
+  <script src="app.js?v=20261109b"></script>
 </body>
 </html>

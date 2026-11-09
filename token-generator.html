@@ -64,8 +64,8 @@
 <body>
   <h1>APIトークン生成</h1>
   <p>
-    GAS の <code>CONFIG.API_TOKEN</code> と、手元の <code>secrets.js</code> に
-    <strong>同じ値</strong>を入れるための文字列を作ります。
+    GAS（Script Properties）と PWA の<strong>接続設定</strong>に入れる
+    API トークン用文字列を作ります。リポジトリには載せません。
   </p>
 
   <div class="row">
@@ -83,25 +83,24 @@
   </div>
 
   <div class="row">
-    <label for="gasUrl">GASデプロイURL（任意・入れると secrets.js 全文を作る）</label>
+    <label for="gasUrl">GASデプロイURL（任意・メモ用）</label>
     <input type="text" id="gasUrl" placeholder="https://script.google.com/macros/s/...../exec">
   </div>
 
   <div class="row">
-    <label for="secretsOut">secrets.js 用（この内容で上書き保存）</label>
+    <label for="secretsOut">接続設定メモ（任意）</label>
     <textarea id="secretsOut" readonly></textarea>
-    <button type="button" class="btn btn-secondary" id="btnCopySecrets">secrets.js 全文をコピー</button>
+    <button type="button" class="btn btn-secondary" id="btnCopySecrets">メモをコピー</button>
     <div class="ok" id="copiedSecrets">コピーしました</div>
   </div>
 
   <div class="hint">
     <strong>使い方</strong><br>
     1. 「トークンを生成」→ トークンをコピー<br>
-    2. Apps Script の <code>API_TOKEN: '....'</code> に貼る → 保存 → 再デプロイ<br>
-    3. デプロイURLを上に貼る（任意）→ 「secrets.js 全文をコピー」<br>
-    4. プロジェクトの <code>secrets.js</code> を開いて全部貼り付けて保存<br>
-    5. <a href="index.html">名刺OCR</a> を開いて試験<br><br>
-    ※ このページ自体はネットに送りません。生成はブラウザ内だけです。
+    2. Apps Script で <code>setupMeishiOcr</code> を実行したログのトークンと一致させる（または Properties の API_TOKEN を手動設定）<br>
+    3. GAS を保存 → ウェブアプリを<strong>再デプロイ</strong><br>
+    4. <a href="index.html">名刺OCR</a> の<strong>接続設定</strong>にデプロイ URL とトークンを貼って保存<br><br>
+    ※ このページはブラウザ内だけで動作します。
   </div>
 
   <script>
@@ -124,13 +123,12 @@
       const token = document.getElementById('token').value || 'YOUR_API_TOKEN';
       const gasUrl = document.getElementById('gasUrl').value.trim() || 'https://script.google.com/macros/s/XXXX/exec';
       document.getElementById('secretsOut').value =
-`// このファイルは GitHub に上がりません（.gitignore）
-// GAS の CONFIG.API_TOKEN にも、下の API_TOKEN と「同じ文字」を入れてください
+`名刺OCR 接続設定メモ
+GAS URL: ${gasUrl}
+API_TOKEN: ${token}
 
-window.MEISHI_OCR = {
-  GAS_URL: '${escapeJs(gasUrl)}',
-  API_TOKEN: '${escapeJs(token)}'
-};
+→ index.html の「接続設定」に上記を貼り付けて保存してください。
+→ GAS 側は setupMeishiOcr 実行後の Properties と一致させてください。
 `;
     }
 
