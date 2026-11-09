@@ -4,7 +4,7 @@
 
 Pixel のカメラで名刺を撮影し、**Cloud Vision OCR + Gemini 構造化抽出** → **Google Sheets / Drive** 保存 → **People API** で連絡先同期する PWA です。中継は **Google Apps Script（GAS）**。
 
-**現行バージョン:** PWA `20261111a` / GAS `20261110b`（PWA 想定は `PWA_VERSION`、不一致時は警告色）
+**現行バージョン:** PWA `20261112a` / GAS `20261110b`（PWA 想定は `PWA_VERSION`、不一致時は警告色）
 
 ## システム構成
 
@@ -51,6 +51,12 @@ Pixel（PWA / GitHub Pages）→ GAS（中継）
 - **公開リポジトリに `GAS_URL` / `API_TOKEN` をコミットしない**（旧 `secrets.js` 方式は廃止）
 - API キーは GAS の CONFIG または Script Properties のみ
 - 過去にリポジトリへ載せたトークンは **無効化してローテート**（git 履歴の書き換えは不要）
+
+## 撮影ガイド枠（20261112）
+
+- カメラに **91:55 比率**のガイド枠を表示（横/縦名刺を切替）
+- 既定は **ガイド枠切り取り**（従来の自動検出も選択可・localStorage）
+- **元の写真**はフルフレームを保持し、ガイド切り取り後も「元の写真に戻す」可
 
 ## 撮影後のやり直し（20261111）
 
