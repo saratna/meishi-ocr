@@ -1130,7 +1130,7 @@ function testSetup() {
 // createFile まで実行して Drive 書き込み権限を要求する
 function authorizeDrive() {
   if (!getConfigValue('DRIVE_FOLDER_ID') || getConfigValue('DRIVE_FOLDER_ID') === 'YOUR_DRIVE_FOLDER_ID') {
-    throw new Error('先に getConfigValue('DRIVE_FOLDER_ID') を正しいフォルダIDに設定してください');
+    throw new Error('先に DRIVE_FOLDER_ID を正しいフォルダIDに設定してください');
   }
 
   const folder = DriveApp.getFolderById(getConfigValue('DRIVE_FOLDER_ID'));

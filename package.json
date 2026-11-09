@@ -2,6 +2,7 @@
   "name": "meishi-ocr",
   "private": true,
   "scripts": {
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js",
+    "test:gas-syntax": "node -e \"new Function(require('fs').readFileSync('code.gs','utf8'))\""
   }
 }
