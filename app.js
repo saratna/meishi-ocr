@@ -1,5 +1,19 @@
-/* meishi-ocr frontend v20261110b */
-const APP_VERSION = '20261110b';
+/* meishi-ocr frontend v20261111a */
+const APP_VERSION = '20261111a';
+
+const EDIT_UNDO_MAX_DEPTH = 6;
+
+function createCaptureEditHistoryStore() {
+  if (!window.MeishiEditHistory) {
+    throw new Error('MeishiEditHistory が読み込まれていません');
+  }
+  return {
+    front: MeishiEditHistory.createEditHistory(EDIT_UNDO_MAX_DEPTH),
+    back: MeishiEditHistory.createEditHistory(EDIT_UNDO_MAX_DEPTH)
+  };
+}
+
+const captureEditHistory = createCaptureEditHistoryStore();
 
 const SEARCH_SORT_LS_KEY = 'meishi_search_sort';
 const SEARCH_FILTER_TAGS_LS_KEY = 'meishi_search_filter_tags';
@@ -65,6 +79,9 @@ const btnCropSquare = $('btnCropSquare');
 const btnCropQuad = $('btnCropQuad');
 const btnAutoCrop = $('btnAutoCrop');
 const cropTools = $('cropTools');
+const editHistoryTools = $('editHistoryTools');
+const btnUndoEdit = $('btnUndoEdit');
+const btnRestoreOriginal = $('btnRestoreOriginal');
 const actionTools = $('actionTools');
 const cropEditor = $('cropEditor');
 const cropCanvas = $('cropCanvas');
@@ -242,7 +259,9 @@ function onClick(el, handler) {
 function setToolsVisible(on) {
   rotateTools.classList.toggle('show', !!on);
   cropTools.classList.toggle('show', !!on);
+  if (editHistoryTools) editHistoryTools.classList.toggle('show', !!on);
   actionTools.classList.toggle('show', !!on);
+  if (on) updateEditHistoryControls();
 }
 
 function updatePreviewVisibility() {
@@ -266,6 +285,7 @@ function updatePreviewVisibility() {
 
   const hasAny = !!(imageFront || imageBack);
   previewPair.classList.toggle('show', hasAny);
+  updateEditHistoryControls();
 }
 
 function showCameraFor(side) {
@@ -314,8 +334,16 @@ function getActiveCropBase64() {
   return '';
 }
 
-function setActiveCropBase64(base64, side) {
-  const use = side || cropState.side || getActiveCropSide();
+function getSideHistory(side) {
+  return side === 'back' ? captureEditHistory.back : captureEditHistory.front;
+}
+
+function getSideImageBase64(side) {
+  return side === 'back' ? imageBack : imageFront;
+}
+
+function assignSideImage(base64, side) {
+  const use = side || getActiveCropSide() || 'front';
   if (use === 'back') {
     imageBack = base64;
     skipAutoLandscape.back = true;
@@ -325,6 +353,101 @@ function setActiveCropBase64(base64, side) {
     faceBox = null;
     faceImage = '';
   }
+}
+
+function rememberEditMutation(side) {
+  const use = side || getActiveCropSide();
+  if (!use) return;
+  const current = getSideImageBase64(use);
+  if (!current) return;
+  MeishiEditHistory.recordEdit(getSideHistory(use), current);
+}
+
+function setCaptureOriginalForSide(side, base64) {
+  if (!side || !base64) return;
+  MeishiEditHistory.setCaptureOriginal(getSideHistory(side), base64);
+  updateEditHistoryControls();
+}
+
+function resetCaptureEditHistory(side) {
+  if (side === 'back' || side === 'front') {
+    MeishiEditHistory.resetEditHistory(getSideHistory(side));
+  } else {
+    MeishiEditHistory.resetEditHistory(captureEditHistory.front);
+    MeishiEditHistory.resetEditHistory(captureEditHistory.back);
+  }
+}
+
+function updateEditHistoryControls() {
+  const side = getActiveCropSide();
+  if (!btnUndoEdit && !btnRestoreOriginal) return;
+  if (!side) {
+    if (btnUndoEdit) btnUndoEdit.disabled = true;
+    if (btnRestoreOriginal) btnRestoreOriginal.disabled = true;
+    return;
+  }
+  const history = getSideHistory(side);
+  const current = getSideImageBase64(side);
+  if (btnUndoEdit) {
+    btnUndoEdit.disabled = !MeishiEditHistory.hasUndo(history);
+  }
+  if (btnRestoreOriginal) {
+    btnRestoreOriginal.disabled = !MeishiEditHistory.hasOriginal(history) ||
+      MeishiEditHistory.isCurrentOriginal(current, history);
+  }
+}
+
+function undoLastImageEdit() {
+  const side = getActiveCropSide();
+  if (!side) {
+    showError('元に戻す対象がありません');
+    return;
+  }
+  const history = getSideHistory(side);
+  const prev = MeishiEditHistory.undoEdit(history);
+  if (!prev) {
+    showError('これ以上元に戻せません');
+    return;
+  }
+  assignSideImage(prev, side);
+  lastCapturedSide = side;
+  updatePreviewVisibility();
+  updateEditHistoryControls();
+  captureLabel.textContent = (side === 'back' ? '裏面' : '表面') + 'を1つ前の状態に戻しました';
+  clearError();
+}
+
+function restoreOriginalCapture() {
+  const side = getActiveCropSide();
+  if (!side) {
+    showError('元の写真がありません');
+    return;
+  }
+  const history = getSideHistory(side);
+  const original = MeishiEditHistory.getOriginal(history);
+  if (!original) {
+    showError('元の写真がありません');
+    return;
+  }
+  const current = getSideImageBase64(side);
+  if (current && current !== original) {
+    MeishiEditHistory.recordEdit(history, current);
+  }
+  history.undoStack = [];
+  assignSideImage(original, side);
+  lastCapturedSide = side;
+  updatePreviewVisibility();
+  updateEditHistoryControls();
+  captureLabel.textContent = '撮影直後の写真に戻しました。「4点で切る」からやり直せます';
+  clearError();
+}
+
+function setActiveCropBase64(base64, side, options) {
+  const use = side || cropState.side || getActiveCropSide();
+  const skipHistory = options && options.skipHistory;
+  if (!skipHistory) rememberEditMutation(use);
+  assignSideImage(base64, use);
+  updateEditHistoryControls();
 }
 
 function loadImageFromBase64(base64) {
@@ -578,17 +701,21 @@ async function applyCapturedImage(base64) {
   skipAutoLandscape[sideKey] = false;
 
   if (captureSide === 'back') {
-    imageBack = next;
+    assignSideImage(next, 'back');
+    setCaptureOriginalForSide('back', next);
     lastCapturedSide = 'back';
   } else {
-    imageFront = next;
+    assignSideImage(next, 'front');
+    setCaptureOriginalForSide('front', next);
     imageBack = '';
+    resetCaptureEditHistory('back');
     lastCapturedSide = 'front';
     faceBox = null;
     faceImage = '';
     skipAutoLandscape.back = false;
   }
   showPostCaptureActions();
+  updateEditHistoryControls();
   captureLabel.textContent = captureSide === 'back'
     ? '表・裏 撮影済み'
     : '表面 撮影済み（裏面は任意）';
@@ -687,17 +814,12 @@ async function rotateMeishi(degrees) {
     const side = getActiveCropSide();
     if (!side) throw new Error('先に撮影してください');
     const deg = Number(degrees) || 90;
-    if (side === 'back') {
-      imageBack = await rotateBase64(imageBack, deg);
-      skipAutoLandscape.back = true;
-    } else {
-      imageFront = await rotateBase64(imageFront, deg);
-      skipAutoLandscape.front = true;
-      faceBox = null;
-      faceImage = '';
-    }
+    rememberEditMutation(side);
+    const rotated = await rotateBase64(getSideImageBase64(side), deg);
+    assignSideImage(rotated, side);
     lastCapturedSide = side;
     updatePreviewVisibility();
+    updateEditHistoryControls();
     setToolsVisible(true);
     captureLabel.textContent = (side === 'back' ? '裏面' : '表面') + 'を' + deg + '°回転しました';
   } catch (err) {
@@ -721,6 +843,7 @@ function resetCamera() {
   imageBack = '';
   faceBox = null;
   faceImage = '';
+  resetCaptureEditHistory();
   skipAutoLandscape = { front: false, back: false };
   previewFront.removeAttribute('src');
   previewBack.removeAttribute('src');
@@ -1797,6 +1920,8 @@ onClick(btnRotateRight, () => rotateMeishi(90));
 onClick(btnAutoCrop, autoCropMeishi);
 onClick(btnCropSquare, () => openCropEditor('square'));
 onClick(btnCropQuad, () => openCropEditor('quad'));
+onClick(btnUndoEdit, undoLastImageEdit);
+onClick(btnRestoreOriginal, restoreOriginalCapture);
 onClick(btnCaptureBack, startBackCapture);
 onClick(btnScan, startMeishiScan);
 onClick(btnRetry, resetCamera);

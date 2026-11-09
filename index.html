@@ -97,6 +97,7 @@
     .btn-rotate:hover { background: #35507a; }
     .rotate-tools,
     .crop-tools,
+    .edit-history-tools,
     .action-tools {
       width: 100%;
       max-width: 400px;
@@ -105,10 +106,23 @@
       margin-bottom: 10px;
     }
     .rotate-tools.show,
-    .crop-tools.show { display: flex; flex-wrap: wrap; }
+    .crop-tools.show,
+    .edit-history-tools.show { display: flex; flex-wrap: wrap; }
     .action-tools.show { display: flex; flex-direction: column; }
+    .btn-undo { background: #3b4f72; color: #fff; flex: 1 1 calc(50% - 4px); }
+    .btn-undo:hover { background: #2f3f5c; }
+    .btn-restore { background: #5a3b72; color: #fff; flex: 1 1 100%; }
+    .btn-restore:hover { background: #4a2f5c; }
+    .edit-history-hint {
+      width: 100%;
+      font-size: 0.78rem;
+      color: #9aa3b8;
+      line-height: 1.45;
+      margin: 0 0 6px;
+    }
     .rotate-tools .btn,
     .crop-tools .btn,
+    .edit-history-tools .btn,
     .action-tools .btn {
       flex: 1 1 45%;
       margin-bottom: 0;
@@ -645,7 +659,7 @@
 </head>
 <body>
   <h1>名刺OCR</h1>
-  <p class="app-ver">v20261110b</p>
+  <p class="app-ver">v20261111a</p>
 
   <div class="tabs">
     <button class="tab active" type="button" data-tab="scan">スキャン</button>
@@ -685,6 +699,11 @@
       <button id="btnAutoCrop" class="btn btn-autocrop" type="button">自動で真四角</button>
       <button id="btnCropSquare" class="btn btn-crop" type="button">正方形で切る</button>
       <button id="btnCropQuad" class="btn btn-crop" type="button">4点で切る</button>
+    </div>
+    <div class="edit-history-tools" id="editHistoryTools">
+      <p class="edit-history-hint">自動切り取りや回転のあとでも、撮影直後の写真に戻してやり直せます（登録までは端末内のみ保持）。</p>
+      <button id="btnUndoEdit" class="btn btn-undo" type="button" disabled>1つ戻す</button>
+      <button id="btnRestoreOriginal" class="btn btn-restore" type="button" disabled>元の写真に戻す</button>
     </div>
     <div class="action-tools" id="actionTools">
       <button id="btnCaptureBack" class="btn btn-back" type="button">裏面も撮る</button>
@@ -807,9 +826,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20261110b"></script>
-  <script src="lib/card-normalize.js?v=20261110b"></script>
-  <script src="lib/meishi-crop.js?v=20261110b"></script>
-  <script src="app.js?v=20261110b"></script>
+  <script src="config.js?v=20261111a"></script>
+  <script src="lib/card-normalize.js?v=20261111a"></script>
+  <script src="lib/meishi-crop.js?v=20261111a"></script>
+  <script src="lib/image-edit-history.js?v=20261111a"></script>
+  <script src="app.js?v=20261111a"></script>
 </body>
 </html>
