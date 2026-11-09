@@ -318,6 +318,74 @@
     }
     .status.show { display: block; }
     .status h3 { color: #2ecc71; margin-bottom: 8px; }
+    .search-toolbar {
+      width: 100%;
+      max-width: 760px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 10px;
+      margin-bottom: 10px;
+    }
+    .search-sort {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1 1 auto;
+    }
+    .search-sort label {
+      font-size: 0.82rem;
+      color: #9aa3b8;
+      white-space: nowrap;
+    }
+    .search-sort select {
+      flex: 1;
+      min-width: 8rem;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #33405f;
+      background: #16213e;
+      color: #e0e0e0;
+      font-size: 0.95rem;
+    }
+    .search-tag-filter {
+      width: 100%;
+      max-width: 760px;
+      margin-bottom: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      border: 1px solid #2a3552;
+      background: #121a30;
+    }
+    .search-tag-mode {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-bottom: 10px;
+      font-size: 0.84rem;
+      color: #c5cad6;
+    }
+    .search-tag-mode label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .search-tag-actions {
+      display: flex;
+      justify-content: flex-end;
+      margin-top: 8px;
+    }
+    .btn-clear-tags {
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: 1px solid #44506e;
+      background: #1b2744;
+      color: #dbe2f0;
+      font-size: 0.82rem;
+      cursor: pointer;
+    }
+    .btn-clear-tags[hidden] { display: none; }
     .search-area {
       width: 100%;
       max-width: 760px;
@@ -347,7 +415,23 @@
       color: #9ca3b5;
       font-size: 0.82rem;
       margin: 2px 2px 12px;
+      line-height: 1.5;
     }
+    .btn-load-more {
+      width: 100%;
+      max-width: 760px;
+      margin: 12px 0 4px;
+      padding: 13px;
+      border: 1px solid #3a4f7a;
+      border-radius: 12px;
+      background: #1a2d4f;
+      color: #dbe6ff;
+      font-size: 0.95rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .btn-load-more:disabled { opacity: 0.55; cursor: wait; }
+    .btn-load-more[hidden] { display: none; }
     .card-gallery {
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -561,7 +645,7 @@
 </head>
 <body>
   <h1>名刺OCR</h1>
-  <p class="app-ver">v20261109b</p>
+  <p class="app-ver">v20261110b</p>
 
   <div class="tabs">
     <button class="tab active" type="button" data-tab="scan">スキャン</button>
@@ -650,10 +734,28 @@
   </div>
 
   <div id="tab-search" class="tab-content">
+    <div class="search-toolbar">
+      <div class="search-sort">
+        <label for="searchSort">並べ替え</label>
+        <select id="searchSort" aria-label="名刺の並べ替え"></select>
+      </div>
+    </div>
+    <div class="search-tag-filter">
+      <div class="search-tag-mode" role="radiogroup" aria-label="タグの絞り込み方法">
+        <label><input type="radio" name="searchTagMode" id="searchTagModeOr" value="or" checked> いずれかのタグを含む（OR）</label>
+        <label><input type="radio" name="searchTagMode" id="searchTagModeAnd" value="and"> すべてのタグを含む（AND）</label>
+      </div>
+      <p class="tag-hint">Google連絡先ラベル（R列・使用頻度順）。タップで絞り込み（フリーワード・並べ替えと併用可）。</p>
+      <div id="searchTagList" class="tag-list"></div>
+      <div class="search-tag-actions">
+        <button type="button" id="btnClearSearchTags" class="btn-clear-tags" hidden>タグ絞り込みを解除</button>
+      </div>
+    </div>
     <div class="search-area">
-      <input type="search" id="searchInput" placeholder="名前・会社・タグ・登録日で絞り込み" aria-label="保存した名刺を検索">
+      <input type="search" id="searchInput" placeholder="名前・会社・タグ・登録日で絞り込み（空欄で全件）" aria-label="保存した名刺を検索">
     </div>
     <div id="searchResults" class="search-results" aria-live="polite"></div>
+    <button type="button" id="btnLoadMore" class="btn-load-more" hidden>もっと見る</button>
   </div>
 
   <div id="cardDetail" class="card-detail-backdrop" aria-hidden="true">
@@ -705,9 +807,9 @@
     </div>
   </div>
 
-  <script src="config.js?v=20261109b"></script>
-  <script src="lib/card-normalize.js?v=20261109b"></script>
-  <script src="lib/meishi-crop.js?v=20261109b"></script>
-  <script src="app.js?v=20261109b"></script>
+  <script src="config.js?v=20261110b"></script>
+  <script src="lib/card-normalize.js?v=20261110b"></script>
+  <script src="lib/meishi-crop.js?v=20261110b"></script>
+  <script src="app.js?v=20261110b"></script>
 </body>
 </html>
