@@ -1,0 +1,7 @@
+{
+  "name": "meishi-ocr",
+  "private": true,
+  "scripts": {
+    "test": "node --test tests/*.test.js"
+  }
+}

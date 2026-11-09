@@ -1,7 +1,17 @@
-/* meishi-ocr frontend v20261024a */
-const APP_VERSION = '20261024a';
-const GAS_URL = (window.MEISHI_OCR && window.MEISHI_OCR.GAS_URL) || 'YOUR_GAS_WEBAPP_URL';
-const API_TOKEN = (window.MEISHI_OCR && window.MEISHI_OCR.API_TOKEN) || 'YOUR_API_TOKEN';
+/* meishi-ocr frontend v20261109b */
+const APP_VERSION = '20261109b';
+
+function getGasUrl() {
+  return (window.MeishiConfig && window.MeishiConfig.readGasUrl())
+    || (window.MEISHI_OCR && window.MEISHI_OCR.GAS_URL)
+    || '';
+}
+
+function getApiToken() {
+  return (window.MeishiConfig && window.MeishiConfig.readApiToken())
+    || (window.MEISHI_OCR && window.MEISHI_OCR.API_TOKEN)
+    || '';
+}
 
 const FIELDS = [
   { key: 'name', id: 'edit-name' },
@@ -64,6 +74,11 @@ const tagList = $('tagList');
 const newTagInput = $('newTagInput');
 const btnAddTag = $('btnAddTag');
 const editRegisteredDate = $('edit-registeredDate');
+const scanPane = $('tab-scan');
+const cardDetail = $('cardDetail');
+const cardDetailTitle = $('cardDetailTitle');
+const cardDetailBody = $('cardDetailBody');
+const cardDetailClose = $('cardDetailClose');
 
 let captureSide = 'front';
 let lastCapturedSide = 'front';
@@ -82,6 +97,11 @@ let lastShotAt = 0;
 let lastRotateAt = 0;
 let tagCatalog = [];
 let selectedTags = [];
+let searchCards = [];
+let activeCardIndex = -1;
+let activeCardSide = 'front';
+let searchRequestId = 0;
+let detailReturnFocus = null;
 
 const cropState = {
   mode: null,
@@ -132,11 +152,13 @@ function setLoading(on, text) {
 }
 
 function assertConfig() {
-  if (!GAS_URL || GAS_URL === 'YOUR_GAS_WEBAPP_URL') {
-    throw new Error('secrets.js に GAS_URL を設定してください');
+  const gasUrl = getGasUrl();
+  const token = getApiToken();
+  if (!gasUrl || gasUrl === 'YOUR_GAS_WEBAPP_URL') {
+    throw new Error('接続設定で GAS のデプロイ URL を入力して保存してください');
   }
-  if (!API_TOKEN || API_TOKEN === 'YOUR_API_TOKEN') {
-    throw new Error('secrets.js に API_TOKEN を設定してください');
+  if (!token || token === 'YOUR_API_TOKEN') {
+    throw new Error('接続設定で API トークンを入力して保存してください');
   }
 }
 
@@ -146,9 +168,9 @@ async function gasFetch(payload) {
   const timer = controller ? setTimeout(() => controller.abort(), 90000) : null;
   let response;
   try {
-    response = await fetch(GAS_URL, {
+    response = await fetch(getGasUrl(), {
       method: 'POST',
-      body: JSON.stringify(Object.assign({ token: API_TOKEN }, payload)),
+      body: JSON.stringify(Object.assign({ token: getApiToken() }, payload)),
       redirect: 'follow',
       signal: controller ? controller.signal : undefined
     });
@@ -230,6 +252,7 @@ function showCameraFor(side) {
   statusBox.classList.remove('show');
   editForm.classList.remove('show');
   btnSave.classList.remove('show');
+  if (scanPane) scanPane.classList.remove('reviewing');
   setLoading(false);
   setToolsVisible(false);
   previewPair.classList.remove('show');
@@ -686,6 +709,7 @@ function resetCamera() {
   captureHint.classList.remove('show');
   btnSave.classList.remove('show');
   editForm.classList.remove('show');
+  if (scanPane) scanPane.classList.remove('reviewing');
   statusBox.classList.remove('show');
   setLoading(false);
   clearError();
@@ -694,56 +718,10 @@ function resetCamera() {
   if (!video.srcObject) startCamera();
 }
 
-function toGray(data, w, h) {
-  const g = new Uint8ClampedArray(w * h);
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    g[p] = (data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114) | 0;
-  }
-  return g;
-}
-
-function sobelEdges(gray, w, h) {
-  const out = new Float32Array(w * h);
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const i = y * w + x;
-      const gx = -gray[i - w - 1] + gray[i - w + 1] - 2 * gray[i - 1] + 2 * gray[i + 1] - gray[i + w - 1] + gray[i + w + 1];
-      const gy = -gray[i - w - 1] - 2 * gray[i - w] - gray[i - w + 1] + gray[i + w - 1] + 2 * gray[i + w] + gray[i + w + 1];
-      out[i] = Math.abs(gx) + Math.abs(gy);
-    }
-  }
-  return out;
-}
-
-function convexHull(points) {
-  if (points.length <= 3) return points.slice();
-  points = points.slice().sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-  const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-  const lower = [];
-  for (let i = 0; i < points.length; i++) {
-    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], points[i]) <= 0) lower.pop();
-    lower.push(points[i]);
-  }
-  const upper = [];
-  for (let i = points.length - 1; i >= 0; i--) {
-    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], points[i]) <= 0) upper.pop();
-    upper.push(points[i]);
-  }
-  lower.pop();
-  upper.pop();
-  return lower.concat(upper);
-}
-
-function quadArea(pts) {
-  let a = 0;
-  for (let i = 0; i < 4; i++) {
-    const j = (i + 1) % 4;
-    a += pts[i].x * pts[j].y - pts[j].x * pts[i].y;
-  }
-  return Math.abs(a) / 2;
-}
-
 function orderQuadPoints(pts) {
+  if (window.MeishiCrop && window.MeishiCrop.orderQuadPoints) {
+    return window.MeishiCrop.orderQuadPoints(pts);
+  }
   const tagged = pts.map((p) => ({ p: p, s: p.x + p.y, d: p.x - p.y }));
   const tl = tagged.reduce((a, b) => (a.s < b.s ? a : b)).p;
   const br = tagged.reduce((a, b) => (a.s > b.s ? a : b)).p;
@@ -752,97 +730,11 @@ function orderQuadPoints(pts) {
   return [tl, tr, br, bl];
 }
 
-function insetQuad(pts, ratio) {
-  const cx = (pts[0].x + pts[1].x + pts[2].x + pts[3].x) / 4;
-  const cy = (pts[0].y + pts[1].y + pts[2].y + pts[3].y) / 4;
-  return pts.map((p) => ({
-    x: p.x + (cx - p.x) * ratio,
-    y: p.y + (cy - p.y) * ratio
-  }));
-}
-
-function fallbackRect(w, h, scale, marginRatio) {
-  const m = Math.round(Math.min(w, h) * marginRatio);
-  return orderQuadPoints([
-    { x: m / scale, y: m / scale },
-    { x: (w - m) / scale, y: m / scale },
-    { x: (w - m) / scale, y: (h - m) / scale },
-    { x: m / scale, y: (h - m) / scale }
-  ]);
-}
-
 function detectCardCorners(img) {
-  const maxW = 360;
-  const scale = Math.min(1, maxW / img.width);
-  const w = Math.max(40, Math.round(img.width * scale));
-  const h = Math.max(40, Math.round(img.height * scale));
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(img, 0, 0, w, h);
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const gray = toGray(imageData.data, w, h);
-  const edges = sobelEdges(gray, w, h);
-
-  const border = [];
-  for (let x = 0; x < w; x++) {
-    border.push(gray[x], gray[(h - 1) * w + x]);
+  if (!window.MeishiCrop || !window.MeishiCrop.detectCardCorners) {
+    throw new Error('画像処理ライブラリが読み込まれていません');
   }
-  for (let y = 0; y < h; y++) {
-    border.push(gray[y * w], gray[y * w + w - 1]);
-  }
-  border.sort((a, b) => a - b);
-  const bg = border[border.length >> 1];
-
-  let maxE = 0;
-  for (let i = 0; i < edges.length; i++) if (edges[i] > maxE) maxE = edges[i];
-  const eThr = Math.max(28, maxE * 0.2);
-  const dThr = 26;
-
-  const pts = [];
-  for (let y = 2; y < h - 2; y += 2) {
-    for (let x = 2; x < w - 2; x += 2) {
-      const i = y * w + x;
-      if (Math.abs(gray[i] - bg) >= dThr || edges[i] >= eThr) pts.push({ x: x, y: y });
-    }
-  }
-  if (pts.length < 24) return fallbackRect(w, h, scale, 0.05);
-
-  const stride = Math.max(1, Math.floor(pts.length / 450));
-  const sampled = [];
-  for (let i = 0; i < pts.length; i += stride) sampled.push(pts[i]);
-  const hull = convexHull(sampled);
-  if (hull.length < 4) return fallbackRect(w, h, scale, 0.05);
-
-  let best = null;
-  let bestArea = 0;
-  const n = hull.length;
-  const lim = Math.min(n, 28);
-  const idx = [];
-  for (let i = 0; i < lim; i++) idx.push(Math.floor(i * n / lim));
-  for (let a = 0; a < idx.length; a++) {
-    for (let b = a + 1; b < idx.length; b++) {
-      for (let c = b + 1; c < idx.length; c++) {
-        for (let d = c + 1; d < idx.length; d++) {
-          const quad = [hull[idx[a]], hull[idx[b]], hull[idx[c]], hull[idx[d]]];
-          const area = quadArea(quad);
-          if (area > bestArea) {
-            bestArea = area;
-            best = quad;
-          }
-        }
-      }
-    }
-  }
-  if (!best || bestArea < w * h * 0.12) return fallbackRect(w, h, scale, 0.04);
-
-  const ordered = orderQuadPoints(best);
-  const refined = insetQuad(ordered, 0.03).map((p) => ({
-    x: p.x / scale,
-    y: p.y / scale
-  }));
-  return orderQuadPoints(refined);
+  return window.MeishiCrop.detectCardCorners(img);
 }
 
 function solveGaussian(Ain, bin) {
@@ -1180,8 +1072,8 @@ async function openCropEditor(mode) {
   try {
     cropState.points = detectCardCorners(img);
   } catch (e) {
-    const insetX = img.width * 0.08;
-    const insetY = img.height * 0.08;
+    const insetX = img.width * 0.03;
+    const insetY = img.height * 0.03;
     cropState.points = [
       { x: insetX, y: insetY },
       { x: img.width - insetX, y: insetY },
@@ -1438,6 +1330,7 @@ async function startMeishiScan() {
     selectedTags = [];
     if (editRegisteredDate) editRegisteredDate.value = todayDateStr();
     editForm.classList.add('show');
+    if (scanPane) scanPane.classList.add('reviewing');
     btnSave.classList.add('show');
     captureLabel.textContent = '内容を確認して登録してください';
     renderTagList();
@@ -1488,6 +1381,7 @@ async function saveCard() {
       throw new Error((result && result.message) || '登録に失敗しました');
     }
     editForm.classList.remove('show');
+    if (scanPane) scanPane.classList.remove('reviewing');
     const contactNote = result.data && result.data.contactStatus
       ? '（' + result.data.contactStatus + '）'
       : '';
@@ -1503,6 +1397,7 @@ async function saveCard() {
     showError('登録エラー: ' + errText(err));
     btnSave.classList.add('show');
     editForm.classList.add('show');
+    if (scanPane) scanPane.classList.add('reviewing');
   } finally {
     saveBusy = false;
     setLoading(false, '処理中...名刺を読み取っています');
@@ -1518,40 +1413,136 @@ function escapeHtml(s) {
 }
 
 let searchTimer = null;
-async function runSearch() {
-  const query = (searchInput.value || '').trim();
-  if (query.length < 1) {
-    searchResults.classList.remove('show');
-    searchResults.innerHTML = '';
+
+function driveImageUrl(url) {
+  const source = String(url || '').trim();
+  if (!source) return '';
+  if (source.indexOf('drive.google.com') === -1) return source;
+  const pathMatch = source.match(/\/d\/([a-zA-Z0-9_-]+)/);
+  const queryMatch = source.match(/[?&]id=([a-zA-Z0-9_-]+)/);
+  const id = (pathMatch && pathMatch[1]) || (queryMatch && queryMatch[1]);
+  return id ? 'https://drive.google.com/thumbnail?id=' + encodeURIComponent(id) + '&sz=w1200' : source;
+}
+
+function bindImageFallbacks(root) {
+  if (!root) return;
+  root.querySelectorAll('img[data-card-image]').forEach((img) => {
+    img.addEventListener('error', () => {
+      const placeholder = document.createElement('div');
+      placeholder.className = 'search-card-image-placeholder';
+      placeholder.textContent = '画像を表示できません';
+      img.replaceWith(placeholder);
+    }, { once: true });
+  });
+}
+
+function galleryImageMarkup(card) {
+  const side = card.frontImageUrl ? '表面' : card.backImageUrl ? '裏面' : '';
+  const url = card.frontImageUrl || card.backImageUrl || '';
+  if (!url) return '<div class="search-card-image-placeholder">画像なし</div>';
+  return '<img class="search-card-image" data-card-image src="' + escapeHtml(driveImageUrl(url)) +
+    '" alt="' + escapeHtml((card.name || card.company || '名刺') + 'の' + side) + '" loading="lazy">';
+}
+
+function renderSearchCards(rows, query) {
+  searchCards = rows;
+  if (!rows.length) {
+    searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-name">' +
+      (query ? '一致する名刺がありません' : '保存した名刺はまだありません') +
+      '</div><div class="search-card-detail">' +
+      (query ? '検索語を変えてお試しください。' : 'スキャンした名刺を登録すると、ここに画像で並びます。') +
+      '</div></div>';
+    searchResults.classList.add('show');
     return;
   }
+  searchResults.innerHTML = '<p class="search-summary">' +
+    (query ? '「' + escapeHtml(query) + '」の検索結果 ' : '保存した名刺 ') + rows.length + '件' +
+    (rows.length === 20 ? '（20件まで表示）' : '') + '</p><div class="card-gallery">' + rows.map((card, index) =>
+      '<button class="search-card" type="button" data-card-index="' + index + '" aria-label="' +
+        escapeHtml((card.name || card.company || '名刺') + 'の詳細を開く') + '">' +
+        galleryImageMarkup(card) +
+        '<span class="search-card-copy"><span class="search-card-topline"><span class="search-card-name">' +
+          escapeHtml(card.name || '（氏名なし）') + '</span><span class="search-card-date">' +
+          escapeHtml(card.registeredDate || '') + '</span></span><span class="search-card-company">' +
+          escapeHtml(card.company || '') + (card.title ? ' / ' + escapeHtml(card.title) : '') +
+        '</span>' + (card.tags ? '<span class="search-card-tags"># ' + escapeHtml(card.tags) + '</span>' : '') +
+      '</span></button>'
+    ).join('') + '</div>';
+  searchResults.classList.add('show');
+  bindImageFallbacks(searchResults);
+}
+
+const CARD_DETAIL_FIELDS = [
+  ['furigana', 'ふりがな'], ['company', '会社名'], ['department', '部門'], ['title', '役職'],
+  ['mobile1', '携帯電話1'], ['mobile2', '携帯電話2'], ['phone', '電話番号'], ['fax', 'FAX'],
+  ['email1', 'メール1'], ['email2', 'メール2'], ['address', '住所'], ['website', 'ウェブページ'],
+  ['memo', 'メモ'], ['tags', 'タグ'], ['registeredDate', '登録日']
+];
+
+function renderCardDetail() {
+  const card = searchCards[activeCardIndex];
+  if (!card) return;
+  const hasFront = !!card.frontImageUrl;
+  const hasBack = !!card.backImageUrl;
+  if (activeCardSide === 'front' && !hasFront) activeCardSide = 'back';
+  if (activeCardSide === 'back' && !hasBack) activeCardSide = 'front';
+  const imageUrl = activeCardSide === 'back' ? card.backImageUrl : card.frontImageUrl;
+  const sideLabel = activeCardSide === 'back' ? '裏面' : '表面';
+  const imageMarkup = imageUrl
+    ? '<img data-card-image src="' + escapeHtml(driveImageUrl(imageUrl)) + '" alt="名刺の' + sideLabel + '">'
+    : '<div class="search-card-image-placeholder">画像なし</div>';
+  const stageMarkup = hasFront && hasBack
+    ? '<button type="button" class="detail-image-stage" data-detail-toggle aria-label="' +
+      (activeCardSide === 'front' ? '裏面を表示' : '表面を表示') + '">' + imageMarkup + '</button>'
+    : '<div class="detail-image-stage">' + imageMarkup + '</div>';
+  const switchMarkup = hasFront && hasBack
+    ? '<div class="detail-side-switch" aria-label="名刺の面を選択"><button type="button" data-detail-side="front" class="' +
+      (activeCardSide === 'front' ? 'active' : '') + '">表面</button><button type="button" data-detail-side="back" class="' +
+      (activeCardSide === 'back' ? 'active' : '') + '">裏面</button></div>'
+    : '';
+  const fields = CARD_DETAIL_FIELDS.filter(([key]) => card[key]).map(([key, label]) =>
+    '<div class="detail-field"><dt>' + label + '</dt><dd>' + escapeHtml(card[key]) + '</dd></div>'
+  ).join('');
+  cardDetailTitle.textContent = card.name || card.company || '名刺詳細';
+  cardDetailBody.innerHTML = stageMarkup + switchMarkup +
+    (imageUrl ? '<a class="detail-original-link" href="' + escapeHtml(imageUrl) + '" target="_blank" rel="noopener">元の画像を開く</a>' : '') +
+    '<dl class="detail-fields">' + fields + '</dl>';
+  bindImageFallbacks(cardDetailBody);
+}
+
+function openCardDetail(index, source) {
+  if (!searchCards[index]) return;
+  activeCardIndex = index;
+  activeCardSide = searchCards[index].frontImageUrl ? 'front' : 'back';
+  detailReturnFocus = source || null;
+  renderCardDetail();
+  cardDetail.classList.add('show');
+  cardDetail.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  cardDetailClose.focus();
+}
+
+function closeCardDetail() {
+  cardDetail.classList.remove('show');
+  cardDetail.setAttribute('aria-hidden', 'true');
+  document.body.style.overflow = '';
+  if (detailReturnFocus && document.contains(detailReturnFocus)) detailReturnFocus.focus();
+  detailReturnFocus = null;
+}
+
+async function runSearch() {
+  const query = (searchInput.value || '').trim();
+  const requestId = ++searchRequestId;
+  searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-detail">名刺を読み込んでいます…</div></div>';
+  searchResults.classList.add('show');
   try {
     const result = await gasFetch({ action: 'search', query: query });
+    if (requestId !== searchRequestId) return;
     const rows = (result && result.data) || [];
-    if (!rows.length) {
-      searchResults.innerHTML = '<div class="search-card"><div class="search-card-name">該当なし</div></div>';
-      searchResults.classList.add('show');
-      return;
-    }
-    searchResults.innerHTML = rows.map((card) => `
-      <div class="search-card">
-        <div class="search-card-name">${escapeHtml(card.name || '（氏名なし）')}</div>
-        <div class="search-card-company">${escapeHtml(card.company || '')}${card.title ? ' / ' + escapeHtml(card.title) : ''}</div>
-        <div class="search-card-detail">
-          ${card.mobile1 ? '📱 ' + escapeHtml(card.mobile1) + '<br>' : ''}
-          ${card.phone ? '📞 ' + escapeHtml(card.phone) + '<br>' : ''}
-          ${card.email1 ? '✉ ' + escapeHtml(card.email1) + '<br>' : ''}
-          ${card.address ? '📍 ' + escapeHtml(card.address) + '<br>' : ''}
-          ${card.registeredDate ? '📅 ' + escapeHtml(card.registeredDate) + '<br>' : ''}
-          ${card.tags ? '🏷 ' + escapeHtml(card.tags) + '<br>' : ''}
-          ${card.frontImageUrl ? '<a href="' + escapeHtml(card.frontImageUrl) + '" target="_blank" rel="noopener">名刺表</a> ' : ''}
-          ${card.backImageUrl ? '<a href="' + escapeHtml(card.backImageUrl) + '" target="_blank" rel="noopener">名刺裏</a>' : ''}
-        </div>
-      </div>
-    `).join('');
-    searchResults.classList.add('show');
+    renderSearchCards(rows, query);
   } catch (err) {
-    searchResults.innerHTML = '<div class="search-card"><div class="search-card-name">検索エラー</div><div class="search-card-detail">' +
+    if (requestId !== searchRequestId) return;
+    searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-name">名刺を読み込めませんでした</div><div class="search-card-detail">' +
       escapeHtml(errText(err)) + '</div></div>';
     searchResults.classList.add('show');
   }
@@ -1564,7 +1555,39 @@ document.querySelectorAll('.tab').forEach((tab) => {
     tab.classList.add('active');
     const pane = $('tab-' + tab.dataset.tab);
     if (pane) pane.classList.add('active');
+    if (tab.dataset.tab === 'search' && !searchResults.dataset.loaded) {
+      searchResults.dataset.loaded = 'true';
+      runSearch();
+    }
   });
+});
+
+searchResults.addEventListener('click', (event) => {
+  const cardButton = event.target.closest && event.target.closest('[data-card-index]');
+  if (!cardButton) return;
+  openCardDetail(Number(cardButton.getAttribute('data-card-index')), cardButton);
+});
+
+cardDetailBody.addEventListener('click', (event) => {
+  const sideButton = event.target.closest && event.target.closest('[data-detail-side]');
+  if (sideButton) {
+    activeCardSide = sideButton.getAttribute('data-detail-side') === 'back' ? 'back' : 'front';
+    renderCardDetail();
+    return;
+  }
+  const toggle = event.target.closest && event.target.closest('[data-detail-toggle]');
+  if (toggle) {
+    activeCardSide = activeCardSide === 'front' ? 'back' : 'front';
+    renderCardDetail();
+  }
+});
+
+cardDetailClose.addEventListener('click', closeCardDetail);
+cardDetail.addEventListener('click', (event) => {
+  if (event.target === cardDetail) closeCardDetail();
+});
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && cardDetail.classList.contains('show')) closeCardDetail();
 });
 
 onClick(btnCapture, takePhoto);
@@ -1626,24 +1649,88 @@ searchInput.addEventListener('input', () => {
 });
 
 showCameraFor('front');
-startCamera();
-loadContactTags();
-if (!window.MEISHI_OCR) {
-  showError('secrets.js が読み込めません。GitHub Pages に secrets.js があるか確認してください');
+if (window.MeishiConfig && window.MeishiConfig.isConfigured()) {
+  startCamera();
+  loadContactTags();
+} else {
+  openSetupPanel(true);
 }
+
+initSetupPanel();
 console.log('meishi-ocr', APP_VERSION);
 
 (function showVersions() {
   var el = document.querySelector('.app-ver');
   if (!el) return;
   el.textContent = 'PWA ' + APP_VERSION;
-  if (!GAS_URL || GAS_URL === 'YOUR_GAS_WEBAPP_URL') return;
-  fetch(GAS_URL, { method: 'GET', redirect: 'follow' }).then(function (res) {
+  var gasUrl = getGasUrl();
+  if (!gasUrl || gasUrl === 'YOUR_GAS_WEBAPP_URL') return;
+  fetch(gasUrl, { method: 'GET', redirect: 'follow' }).then(function (res) {
     return res.text();
   }).then(function (text) {
     var data = JSON.parse(text);
-    if (data && data.version) {
-      el.textContent = 'PWA ' + APP_VERSION + ' / GAS ' + data.version;
+    if (!data || !data.version) return;
+    var label = 'PWA ' + APP_VERSION + ' / GAS ' + data.version;
+    if (data.pwaVersion && data.pwaVersion !== APP_VERSION) {
+      label += '（版不一致: GASは PWA ' + data.pwaVersion + ' 想定）';
+      el.style.color = '#e6a817';
     }
+    el.textContent = label;
   }).catch(function () { /* 生存確認失敗は無視 */ });
 })();
+
+function openSetupPanel(blocking) {
+  const panel = $('setupPanel');
+  if (!panel) return;
+  panel.classList.add('show');
+  panel.setAttribute('aria-hidden', 'false');
+  if (blocking) panel.classList.add('blocking');
+  const gasInput = $('setupGasUrl');
+  const tokenInput = $('setupApiToken');
+  if (gasInput) gasInput.value = getGasUrl();
+  if (tokenInput) tokenInput.value = getApiToken();
+}
+
+function closeSetupPanel() {
+  const panel = $('setupPanel');
+  if (!panel) return;
+  panel.classList.remove('show', 'blocking');
+  panel.setAttribute('aria-hidden', 'true');
+}
+
+function initSetupPanel() {
+  const btnSave = $('setupSave');
+  const btnClose = $('setupClose');
+  const btnLink = $('openSetup');
+  if (btnLink) {
+    btnLink.addEventListener('click', (ev) => {
+      ev.preventDefault();
+      openSetupPanel(false);
+    });
+  }
+  if (btnSave) {
+    btnSave.addEventListener('click', () => {
+      const gasUrl = ($('setupGasUrl') && $('setupGasUrl').value) || '';
+      const token = ($('setupApiToken') && $('setupApiToken').value) || '';
+      if (!gasUrl.trim() || !token.trim()) {
+        showError('GAS URL と API トークンの両方を入力してください');
+        return;
+      }
+      window.MeishiConfig.saveConnection(gasUrl, token);
+      window.MEISHI_OCR = {
+        GAS_URL: getGasUrl(),
+        API_TOKEN: getApiToken()
+      };
+      closeSetupPanel();
+      clearError();
+      if (!video.srcObject) startCamera();
+      loadContactTags();
+    });
+  }
+  if (btnClose) {
+    btnClose.addEventListener('click', () => {
+      if (window.MeishiConfig.isConfigured()) closeSetupPanel();
+      else showError('初回は接続設定を保存してください');
+    });
+  }
+}
