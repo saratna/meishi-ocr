@@ -1,7 +1,7 @@
-// meishi-ocr GAS  20261109a
+// meishi-ocr GAS  20261110b
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
-var CODE_VERSION = '20261109a';
-var PWA_VERSION = '20261109b';
+var CODE_VERSION = '20261110b';
+var PWA_VERSION = '20261110b';
 
 function ShowCodeVersion() {
   Logger.log('CODE_VERSION = ' + CODE_VERSION);
@@ -74,7 +74,13 @@ function doPost(e) {
     } else if (action === 'save') {
       return handleSave(data.data, data.image, data.imageBack, data.faceImage);
     } else if (action === 'search') {
-      return handleSearch(data.query);
+      return handleSearch(data.query, {
+        offset: data.offset,
+        limit: data.limit,
+        sort: data.sort,
+        tags: data.tags,
+        tagMode: data.tagMode
+      });
     } else if (action === 'tags') {
       return handleListTags();
     } else {
@@ -240,8 +246,106 @@ function handleScanAndSave(imageBase64) {
   return jsonResponse({ status: 'success', data: cardData });
 }
 
-// ===== 検索 =====
-function handleSearch(query) {
+// ===== 検索（ページング・並べ替え） lib/search-sort.js と同期 =====
+var SEARCH_PAGE_SIZE_DEFAULT = 40;
+var SEARCH_PAGE_SIZE_MAX = 60;
+
+function parseSearchCardSortDate(card) {
+  var rd = String(card.registeredDate || '').trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(rd)) {
+    return new Date(rd + 'T00:00:00+09:00').getTime() || 0;
+  }
+  var ca = String(card.createdAt || '').trim();
+  if (ca) {
+    var d = new Date(ca.replace(/\//g, '-'));
+    if (!isNaN(d.getTime())) return d.getTime();
+  }
+  return 0;
+}
+
+function compareSearchCards(a, b, sortId) {
+  var sort = sortId || 'dateDesc';
+  if (sort === 'dateDesc' || sort === 'dateAsc') {
+    var da = parseSearchCardSortDate(a);
+    var db = parseSearchCardSortDate(b);
+    var diff = da - db;
+    if (diff === 0) {
+      diff = String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+    }
+    return sort === 'dateDesc' ? -diff : diff;
+  }
+  if (sort === 'company') {
+    var cmp = String(a.company || '').localeCompare(String(b.company || ''), 'ja');
+    if (cmp !== 0) return cmp;
+    return compareSearchCards(a, b, 'name');
+  }
+  if (sort === 'name') {
+    var fa = String(a.furigana || a.name || '');
+    var fb = String(b.furigana || b.name || '');
+    var n = fa.localeCompare(fb, 'ja');
+    if (n !== 0) return n;
+    return String(a.name || '').localeCompare(String(b.name || ''), 'ja');
+  }
+  return 0;
+}
+
+function sortSearchResults(list, sortId) {
+  var allowed = { dateDesc: 1, dateAsc: 1, company: 1, name: 1 };
+  var sort = allowed[sortId] ? sortId : 'dateDesc';
+  list.sort(function (a, b) {
+    return compareSearchCards(a, b, sort);
+  });
+}
+
+function cardMatchesTagFilter(card, filterTags, mode) {
+  var filters = normalizeTagNames(filterTags);
+  if (!filters.length) return true;
+  var owned = normalizeTagNames(card && card.tags);
+  var set = {};
+  owned.forEach(function (name) {
+    set[name] = true;
+  });
+  var matchMode = String(mode || 'or').toLowerCase() === 'and' ? 'and' : 'or';
+  if (matchMode === 'and') {
+    return filters.every(function (name) { return !!set[name]; });
+  }
+  return filters.some(function (name) { return !!set[name]; });
+}
+
+function mapSheetRowToSearchCard(row) {
+  return {
+    createdAt: row[0] ? String(row[0]) : '',
+    name: row[1],
+    furigana: row[2],
+    company: row[3],
+    department: row[4],
+    title: row[5],
+    mobile1: row[6],
+    mobile2: row[7],
+    phone: row[8],
+    fax: row[9],
+    email1: row[10],
+    email2: row[11],
+    address: row[12],
+    website: row[13],
+    memo: row[14],
+    frontImageUrl: row[15] || '',
+    backImageUrl: row[16] || '',
+    tags: row[17] || '',
+    registeredDate: row[18] || ''
+  };
+}
+
+function handleSearch(query, options) {
+  options = options || {};
+  var offset = Math.max(0, parseInt(options.offset, 10) || 0);
+  var limit = parseInt(options.limit, 10);
+  if (isNaN(limit) || limit < 1) limit = SEARCH_PAGE_SIZE_DEFAULT;
+  limit = Math.min(SEARCH_PAGE_SIZE_MAX, limit);
+  var sort = String(options.sort || 'dateDesc');
+  var filterTags = normalizeTagNames(options.tags);
+  var tagMode = String(options.tagMode || 'or').toLowerCase() === 'and' ? 'and' : 'or';
+
   if (!getConfigValue('SPREADSHEET_ID') || getConfigValue('SPREADSHEET_ID') === 'YOUR_SPREADSHEET_URL') {
     return jsonResponse({ status: 'error', message: 'SPREADSHEET_ID が未設定です' });
   }
@@ -253,51 +357,60 @@ function handleSearch(query) {
   const lastRow = sheet.getLastRow();
 
   if (lastRow < 2) {
-    return jsonResponse({ status: 'success', data: [] });
+    return jsonResponse({
+      status: 'success',
+      data: [],
+      total: 0,
+      offset: 0,
+      limit: limit,
+      hasMore: false
+    });
   }
 
-  const dataRange = sheet.getRange(2, 1, lastRow - 1, 19).getValues();
-  const queryLower = query.toLowerCase();
+  const dataRange = sheet.getRange(2, 1, lastRow, 19).getValues();
+  const queryText = String(query || '').trim();
+  const queryLower = queryText.toLowerCase();
 
-  const results = dataRange
-    .filter(row => {
+  var allCards = dataRange.map(mapSheetRowToSearchCard);
+
+  var filtered = allCards;
+  if (queryLower) {
+    filtered = filtered.filter(function (row) {
       const searchTarget = [
-        row[1],  // 氏名
-        row[2],  // ふりがな
-        row[3],  // 会社名
-        row[4],  // 部門
-        row[5],  // 役職
-        row[10], // メールアドレス1
-        row[6],  // 携帯電話1
-        row[8],  // 電話番号
-        row[17], // タグ
-        row[18]  // 登録日
+        row.name,
+        row.furigana,
+        row.company,
+        row.department,
+        row.title,
+        row.email1,
+        row.mobile1,
+        row.phone,
+        row.tags,
+        row.registeredDate
       ].join(' ').toLowerCase();
       return searchTarget.indexOf(queryLower) !== -1;
-    })
-    .slice(0, 20)
-    .map(row => ({
-      name: row[1],
-      furigana: row[2],
-      company: row[3],
-      department: row[4],
-      title: row[5],
-      mobile1: row[6],
-      mobile2: row[7],
-      phone: row[8],
-      fax: row[9],
-      email1: row[10],
-      email2: row[11],
-      address: row[12],
-      website: row[13],
-      memo: row[14],
-      frontImageUrl: row[15] || '',
-      backImageUrl: row[16] || '',
-      tags: row[17] || '',
-      registeredDate: row[18] || ''
-    }));
+    });
+  }
 
-  return jsonResponse({ status: 'success', data: results });
+  if (filterTags.length) {
+    filtered = filtered.filter(function (row) {
+      return cardMatchesTagFilter(row, filterTags, tagMode);
+    });
+  }
+
+  sortSearchResults(filtered, sort);
+
+  var total = filtered.length;
+  var page = filtered.slice(offset, offset + limit);
+
+  return jsonResponse({
+    status: 'success',
+    data: page,
+    total: total,
+    offset: offset,
+    limit: limit,
+    hasMore: offset + page.length < total
+  });
 }
 
 // ===== Cloud Vision API =====

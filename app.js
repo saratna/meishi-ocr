@@ -1,5 +1,16 @@
-/* meishi-ocr frontend v20261109b */
-const APP_VERSION = '20261109b';
+/* meishi-ocr frontend v20261110b */
+const APP_VERSION = '20261110b';
+
+const SEARCH_SORT_LS_KEY = 'meishi_search_sort';
+const SEARCH_FILTER_TAGS_LS_KEY = 'meishi_search_filter_tags';
+const SEARCH_TAG_MODE_LS_KEY = 'meishi_search_tag_mode';
+const SEARCH_PAGE_SIZE = 40;
+const SEARCH_SORT_OPTIONS = [
+  { id: 'dateDesc', label: '新しい順' },
+  { id: 'dateAsc', label: '古い順' },
+  { id: 'company', label: '会社名順' },
+  { id: 'name', label: '氏名順' }
+];
 
 function getGasUrl() {
   return (window.MeishiConfig && window.MeishiConfig.readGasUrl())
@@ -69,7 +80,13 @@ const statusBox = $('status');
 const statusTitle = $('statusTitle');
 const statusMsg = $('statusMsg');
 const searchInput = $('searchInput');
+const searchSort = $('searchSort');
+const searchTagList = $('searchTagList');
+const searchTagModeOr = $('searchTagModeOr');
+const searchTagModeAnd = $('searchTagModeAnd');
 const searchResults = $('searchResults');
+const btnLoadMore = $('btnLoadMore');
+const btnClearSearchTags = $('btnClearSearchTags');
 const tagList = $('tagList');
 const newTagInput = $('newTagInput');
 const btnAddTag = $('btnAddTag');
@@ -97,7 +114,12 @@ let lastShotAt = 0;
 let lastRotateAt = 0;
 let tagCatalog = [];
 let selectedTags = [];
+let searchFilterTags = [];
 let searchCards = [];
+let searchOffset = 0;
+let searchTotal = 0;
+let searchHasMore = false;
+let searchLoading = false;
 let activeCardIndex = -1;
 let activeCardSide = 'front';
 let searchRequestId = 0;
@@ -1231,6 +1253,83 @@ function addNewTag() {
   renderTagList();
 }
 
+function loadSearchFilterTagsFromStorage() {
+  try {
+    const raw = localStorage.getItem(SEARCH_FILTER_TAGS_LS_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    searchFilterTags = Array.isArray(parsed) ? parsed.filter((t) => String(t || '').trim()) : [];
+  } catch (e) {
+    searchFilterTags = [];
+  }
+}
+
+function saveSearchFilterTagsToStorage() {
+  localStorage.setItem(SEARCH_FILTER_TAGS_LS_KEY, JSON.stringify(searchFilterTags));
+}
+
+function getSearchTagMode() {
+  const mode = localStorage.getItem(SEARCH_TAG_MODE_LS_KEY) || 'or';
+  return mode === 'and' ? 'and' : 'or';
+}
+
+function setSearchTagMode(mode) {
+  localStorage.setItem(SEARCH_TAG_MODE_LS_KEY, mode === 'and' ? 'and' : 'or');
+}
+
+function isSearchTagSelected(name) {
+  return searchFilterTags.indexOf(name) !== -1;
+}
+
+function toggleSearchFilterTag(name) {
+  if (!name) return;
+  const i = searchFilterTags.indexOf(name);
+  if (i >= 0) searchFilterTags.splice(i, 1);
+  else searchFilterTags.push(name);
+  saveSearchFilterTagsToStorage();
+  renderSearchTagList();
+  runSearch();
+}
+
+function clearSearchFilterTags() {
+  if (!searchFilterTags.length) return;
+  searchFilterTags = [];
+  saveSearchFilterTagsToStorage();
+  renderSearchTagList();
+  runSearch();
+}
+
+function syncSearchTagModeControls() {
+  const mode = getSearchTagMode();
+  if (searchTagModeOr) searchTagModeOr.checked = mode === 'or';
+  if (searchTagModeAnd) searchTagModeAnd.checked = mode === 'and';
+}
+
+function renderSearchTagList() {
+  if (!searchTagList) return;
+  const ordered = tagCatalog.slice().sort((a, b) => {
+    if (b.memberCount !== a.memberCount) return b.memberCount - a.memberCount;
+    return String(a.name).localeCompare(String(b.name), 'ja');
+  });
+  searchFilterTags.forEach((name) => {
+    if (!ordered.some((t) => t.name === name)) {
+      ordered.unshift({ name: name, memberCount: 0 });
+    }
+  });
+  if (!ordered.length) {
+    searchTagList.innerHTML = '<div class="tag-hint">タグがありません。Google連絡先のラベルがここに表示されます。</div>';
+    return;
+  }
+  searchTagList.innerHTML = ordered.map((t) => {
+    const selected = isSearchTagSelected(t.name) ? ' selected' : '';
+    const count = t.memberCount >= 0 ? '<span class="tag-count">' + t.memberCount + '</span>' : '';
+    return '<button type="button" class="tag-chip' + selected + '" data-search-tag="' + escapeHtml(t.name) + '">' +
+      escapeHtml(t.name) + count + '</button>';
+  }).join('');
+  if (btnClearSearchTags) {
+    btnClearSearchTags.hidden = searchFilterTags.length === 0;
+  }
+}
+
 function renderTagList() {
   if (!tagList) return;
   const ordered = tagCatalog.slice().sort((a, b) => {
@@ -1264,6 +1363,7 @@ async function loadContactTags() {
     const extras = tagCatalog.filter((t) => t.memberCount < 0 && !rows.some((r) => r.name === t.name));
     tagCatalog = rows.concat(extras);
     renderTagList();
+    renderSearchTagList();
   } catch (err) {
     if (tagList && !tagCatalog.length) {
       tagList.innerHTML = '<div class="tag-hint">既存タグを取得できませんでした。新規追加はできます。<br>' +
@@ -1444,20 +1544,51 @@ function galleryImageMarkup(card) {
     '" alt="' + escapeHtml((card.name || card.company || '名刺') + 'の' + side) + '" loading="lazy">';
 }
 
-function renderSearchCards(rows, query) {
-  searchCards = rows;
-  if (!rows.length) {
+function getSearchSort() {
+  const saved = localStorage.getItem(SEARCH_SORT_LS_KEY);
+  if (saved && SEARCH_SORT_OPTIONS.some((o) => o.id === saved)) return saved;
+  return 'dateDesc';
+}
+
+function setSearchSort(value) {
+  localStorage.setItem(SEARCH_SORT_LS_KEY, value);
+}
+
+function initSearchSortControl() {
+  if (!searchSort) return;
+  const current = getSearchSort();
+  searchSort.innerHTML = SEARCH_SORT_OPTIONS.map((o) =>
+    '<option value="' + o.id + '"' + (o.id === current ? ' selected' : '') + '>' + o.label + '</option>'
+  ).join('');
+  searchSort.value = current;
+}
+
+function searchSummaryText(query) {
+  const q = (query || '').trim();
+  const head = q ? '「' + escapeHtml(q) + '」の結果' : '名刺一覧';
+  let tagPart = '';
+  if (searchFilterTags.length) {
+    const modeLabel = getSearchTagMode() === 'and' ? 'AND（すべて）' : 'OR（いずれか）';
+    tagPart = ' · タグ ' + modeLabel + ': ' + searchFilterTags.map(escapeHtml).join('、');
+  }
+  if (!searchTotal) return head + tagPart;
+  return head + tagPart + '：' + searchCards.length + ' / ' + searchTotal + ' 件';
+}
+
+function renderSearchCards(query) {
+  if (!searchCards.length) {
+    const q = (query || '').trim();
     searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-name">' +
-      (query ? '一致する名刺がありません' : '保存した名刺はまだありません') +
+      (q ? '一致する名刺がありません' : '保存した名刺はまだありません') +
       '</div><div class="search-card-detail">' +
-      (query ? '検索語を変えてお試しください。' : 'スキャンした名刺を登録すると、ここに画像で並びます。') +
+      (q ? '検索語を変えてお試しください。' : 'スキャンした名刺を登録すると、ここに画像で並びます。') +
       '</div></div>';
+    if (btnLoadMore) btnLoadMore.hidden = true;
     searchResults.classList.add('show');
     return;
   }
-  searchResults.innerHTML = '<p class="search-summary">' +
-    (query ? '「' + escapeHtml(query) + '」の検索結果 ' : '保存した名刺 ') + rows.length + '件' +
-    (rows.length === 20 ? '（20件まで表示）' : '') + '</p><div class="card-gallery">' + rows.map((card, index) =>
+  searchResults.innerHTML = '<p class="search-summary">' + searchSummaryText(query) + '</p><div class="card-gallery">' +
+    searchCards.map((card, index) =>
       '<button class="search-card" type="button" data-card-index="' + index + '" aria-label="' +
         escapeHtml((card.name || card.company || '名刺') + 'の詳細を開く') + '">' +
         galleryImageMarkup(card) +
@@ -1470,6 +1601,11 @@ function renderSearchCards(rows, query) {
     ).join('') + '</div>';
   searchResults.classList.add('show');
   bindImageFallbacks(searchResults);
+  if (btnLoadMore) {
+    btnLoadMore.hidden = !searchHasMore;
+    btnLoadMore.disabled = searchLoading;
+    btnLoadMore.textContent = searchLoading ? '読み込み中…' : 'もっと見る（残り ' + Math.max(0, searchTotal - searchCards.length) + ' 件）';
+  }
 }
 
 const CARD_DETAIL_FIELDS = [
@@ -1530,21 +1666,64 @@ function closeCardDetail() {
   detailReturnFocus = null;
 }
 
-async function runSearch() {
+async function runSearch(opts) {
+  opts = opts || {};
+  const append = !!opts.append;
   const query = (searchInput.value || '').trim();
-  const requestId = ++searchRequestId;
-  searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-detail">名刺を読み込んでいます…</div></div>';
-  searchResults.classList.add('show');
+  const sort = getSearchSort();
+
+  if (!append) {
+    searchRequestId += 1;
+    searchOffset = 0;
+    searchCards = [];
+    searchTotal = 0;
+    searchHasMore = false;
+    searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-detail">名刺を読み込んでいます…</div></div>';
+    searchResults.classList.add('show');
+    if (btnLoadMore) btnLoadMore.hidden = true;
+  }
+
+  const requestId = searchRequestId;
+  const fetchOffset = append ? searchOffset : 0;
+  if (searchLoading) return;
+  searchLoading = true;
+  if (btnLoadMore && append) {
+    btnLoadMore.disabled = true;
+    btnLoadMore.textContent = '読み込み中…';
+  }
+
   try {
-    const result = await gasFetch({ action: 'search', query: query });
+    const result = await gasFetch({
+      action: 'search',
+      query: query,
+      offset: fetchOffset,
+      limit: SEARCH_PAGE_SIZE,
+      sort: sort,
+      tags: searchFilterTags.slice(),
+      tagMode: getSearchTagMode()
+    });
     if (requestId !== searchRequestId) return;
     const rows = (result && result.data) || [];
-    renderSearchCards(rows, query);
+    searchTotal = typeof result.total === 'number' ? result.total : rows.length;
+    searchHasMore = !!result.hasMore;
+  searchOffset = fetchOffset + rows.length;
+    searchCards = append ? searchCards.concat(rows) : rows.slice();
+    renderSearchCards(query);
   } catch (err) {
     if (requestId !== searchRequestId) return;
-    searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-name">名刺を読み込めませんでした</div><div class="search-card-detail">' +
-      escapeHtml(errText(err)) + '</div></div>';
-    searchResults.classList.add('show');
+    if (!append) {
+      searchResults.innerHTML = '<div class="empty-search-card"><div class="search-card-name">名刺を読み込めませんでした</div><div class="search-card-detail">' +
+        escapeHtml(errText(err)) + '</div></div>';
+      searchResults.classList.add('show');
+    } else {
+      showError('追加の読み込みに失敗しました: ' + errText(err));
+      if (btnLoadMore) {
+        btnLoadMore.disabled = false;
+        btnLoadMore.textContent = 'もっと見る（再試行）';
+      }
+    }
+  } finally {
+    searchLoading = false;
   }
 }
 
@@ -1555,9 +1734,17 @@ document.querySelectorAll('.tab').forEach((tab) => {
     tab.classList.add('active');
     const pane = $('tab-' + tab.dataset.tab);
     if (pane) pane.classList.add('active');
-    if (tab.dataset.tab === 'search' && !searchResults.dataset.loaded) {
-      searchResults.dataset.loaded = 'true';
-      runSearch();
+    if (tab.dataset.tab === 'search') {
+      if (!searchResults.dataset.loaded) {
+        searchResults.dataset.loaded = 'true';
+        loadSearchFilterTagsFromStorage();
+        syncSearchTagModeControls();
+        if (window.MeishiConfig && window.MeishiConfig.isConfigured()) {
+          loadContactTags().finally(() => runSearch());
+        } else {
+          runSearch();
+        }
+      }
     }
   });
 });
@@ -1645,8 +1832,53 @@ window.addEventListener('mouseup', onCropPointerUp);
 
 searchInput.addEventListener('input', () => {
   clearTimeout(searchTimer);
-  searchTimer = setTimeout(runSearch, 500);
+  searchTimer = setTimeout(() => runSearch(), 500);
 });
+
+if (searchSort) {
+  searchSort.addEventListener('change', () => {
+    setSearchSort(searchSort.value);
+    runSearch();
+  });
+}
+
+if (btnLoadMore) {
+  onClick(btnLoadMore, () => runSearch({ append: true }));
+}
+
+if (searchTagList) {
+  searchTagList.addEventListener('click', (ev) => {
+    const chip = ev.target.closest ? ev.target.closest('[data-search-tag]') : null;
+    if (!chip) return;
+    ev.preventDefault();
+    toggleSearchFilterTag(chip.getAttribute('data-search-tag'));
+  });
+}
+
+function onSearchTagModeChange(mode) {
+  setSearchTagMode(mode);
+  syncSearchTagModeControls();
+  if (searchFilterTags.length) runSearch();
+}
+
+if (searchTagModeOr) {
+  searchTagModeOr.addEventListener('change', () => {
+    if (searchTagModeOr.checked) onSearchTagModeChange('or');
+  });
+}
+if (searchTagModeAnd) {
+  searchTagModeAnd.addEventListener('change', () => {
+    if (searchTagModeAnd.checked) onSearchTagModeChange('and');
+  });
+}
+
+if (btnClearSearchTags) {
+  onClick(btnClearSearchTags, clearSearchFilterTags);
+}
+
+initSearchSortControl();
+loadSearchFilterTagsFromStorage();
+syncSearchTagModeControls();
 
 showCameraFor('front');
 if (window.MeishiConfig && window.MeishiConfig.isConfigured()) {
