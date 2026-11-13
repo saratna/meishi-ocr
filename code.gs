@@ -1,7 +1,7 @@
-// meishi-ocr GAS  20261110b
+// meishi-ocr GAS  20261113a
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
-var CODE_VERSION = '20261110b';
-var PWA_VERSION = '20261112a';
+var CODE_VERSION = '20261113a';
+var PWA_VERSION = '20261113a';
 
 function ShowCodeVersion() {
   Logger.log('CODE_VERSION = ' + CODE_VERSION);
@@ -83,6 +83,10 @@ function doPost(e) {
       });
     } else if (action === 'tags') {
       return handleListTags();
+    } else if (action === 'update_card') {
+      return handleUpdateCard(data.cardId, data.data);
+    } else if (action === 'delete_card') {
+      return handleDeleteCard(data.cardId, !!data.deleteContact);
     } else {
       // 旧互換：scan_and_save
       return handleScanAndSave(data.image);
@@ -196,7 +200,8 @@ function handleSave(cardData, imageFront, imageBack, faceImage) {
     Logger.log(driveNotes[driveNotes.length - 1]);
   }
 
-  writeToSheet(cardData);
+  var writeInfo = writeToSheet(cardData);
+  var sheetRowNum = writeInfo && writeInfo.rowNum;
 
   // Google連絡先にも同期（顔写真＋名刺表）
   try {
@@ -220,6 +225,9 @@ function handleSave(cardData, imageFront, imageBack, faceImage) {
         applyContactTags(resourceName, cardData.tags);
       } catch (tagErr) {
         cardData.contactStatus = (cardData.contactStatus || '') + ' / タグ: ' + tagErr.toString();
+      }
+      if (sheetRowNum) {
+        persistContactResourceOnRow(sheetRowNum, resourceName);
       }
     }
   } catch (e) {
@@ -312,8 +320,12 @@ function cardMatchesTagFilter(card, filterTags, mode) {
   return filters.some(function (name) { return !!set[name]; });
 }
 
+var MEISHI_SHEET_COLS = 22;
+var TRASH_SHEET_NAME = '名刺DB_ゴミ箱';
+
 function mapSheetRowToSearchCard(row) {
   return {
+    cardId: row[19] ? String(row[19]).trim() : '',
     createdAt: row[0] ? String(row[0]) : '',
     name: row[1],
     furigana: row[2],
@@ -367,11 +379,17 @@ function handleSearch(query, options) {
     });
   }
 
-  const dataRange = sheet.getRange(2, 1, lastRow, 19).getValues();
+  ensureExtendedSheetHeaders(sheet);
+  const dataRange = sheet.getRange(2, 1, lastRow - 1, MEISHI_SHEET_COLS).getValues();
+  ensureMissingCardIds(sheet, dataRange);
   const queryText = String(query || '').trim();
   const queryLower = queryText.toLowerCase();
 
-  var allCards = dataRange.map(mapSheetRowToSearchCard);
+  var allCards = [];
+  dataRange.forEach(function (row) {
+    if (row[20] && String(row[20]).trim()) return;
+    allCards.push(mapSheetRowToSearchCard(row));
+  });
 
   var filtered = allCards;
   if (queryLower) {
@@ -988,7 +1006,9 @@ function writeToSheet(cardData) {
 
   const now = new Date();
   const timestamp = Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
-  ensureSheetTagHeaders(sheet);
+  ensureExtendedSheetHeaders(sheet);
+  var cardId = cardData.cardId || Utilities.getUuid();
+  cardData.cardId = cardId;
 
   sheet.appendRow([
     timestamp,
@@ -1009,14 +1029,268 @@ function writeToSheet(cardData) {
     cardData.frontImageUrl || '',
     cardData.backImageUrl || '',
     normalizeTagNames(cardData.tags).join(', '),
-    cardData.registeredDate || Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd')
+    cardData.registeredDate || Utilities.formatDate(now, 'Asia/Tokyo', 'yyyy-MM-dd'),
+    cardId,
+    '',
+    cardData.contactResourceName || ''
   ]);
+  return { cardId: cardId, rowNum: sheet.getLastRow() };
 }
 
 function ensureSheetTagHeaders(sheet) {
   const headers = sheet.getRange(1, 1, 1, 19).getValues()[0];
   if (!headers[17]) sheet.getRange(1, 18).setValue('タグ');
   if (!headers[18]) sheet.getRange(1, 19).setValue('登録日');
+}
+
+function ensureExtendedSheetHeaders(sheet) {
+  ensureSheetTagHeaders(sheet);
+  var width = Math.max(MEISHI_SHEET_COLS, sheet.getLastColumn());
+  var headers = sheet.getRange(1, 1, 1, width).getValues()[0];
+  if (!headers[19]) sheet.getRange(1, 20).setValue('カードID');
+  if (!headers[20]) sheet.getRange(1, 21).setValue('削除日時');
+  if (!headers[21]) sheet.getRange(1, 22).setValue('連絡先ID');
+}
+
+function ensureMissingCardIds(sheet, rows) {
+  if (!rows || !rows.length) return;
+  for (var i = 0; i < rows.length; i++) {
+    if (!rows[i][19] || !String(rows[i][19]).trim()) {
+      var id = Utilities.getUuid();
+      rows[i][19] = id;
+      sheet.getRange(i + 2, 20).setValue(id);
+    }
+  }
+}
+
+function findRowByCardId(sheet, cardId) {
+  var target = String(cardId || '').trim();
+  if (!target) return null;
+  ensureExtendedSheetHeaders(sheet);
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  var idCol = sheet.getRange(2, 20, lastRow - 1, 1).getValues();
+  for (var i = 0; i < idCol.length; i++) {
+    if (String(idCol[i][0] || '').trim() === target) {
+      var rowNum = i + 2;
+      var row = sheet.getRange(rowNum, 1, 1, MEISHI_SHEET_COLS).getValues()[0];
+      return { rowNum: rowNum, row: row };
+    }
+  }
+  return null;
+}
+
+function persistContactResourceOnRow(rowNum, resourceName) {
+  sheetGetMain().getRange(rowNum, 22).setValue(resourceName || '');
+}
+
+function buildEditableRowValues(existing, cardData, cardId) {
+  var tagsStr = normalizeTagNames(cardData.tags).join(', ');
+  return [
+    existing[0] || '',
+    cardData.name || '',
+    cardData.furigana || '',
+    cardData.company || '',
+    cardData.department || '',
+    cardData.title || '',
+    cardData.mobile1 || '',
+    cardData.mobile2 || '',
+    cardData.phone || '',
+    cardData.fax || '',
+    cardData.email1 || '',
+    cardData.email2 || '',
+    cardData.address || '',
+    cardData.website || '',
+    cardData.memo || '',
+    cardData.frontImageUrl || existing[15] || '',
+    cardData.backImageUrl || existing[16] || '',
+    tagsStr,
+    cardData.registeredDate || (existing[18] ? String(existing[18]) : ''),
+    cardId,
+    '',
+    existing[21] || ''
+  ];
+}
+
+function resolveContactForUpdate(cardData, contactResourceName) {
+  var rn = String(contactResourceName || '').trim();
+  if (rn) {
+    try {
+      return People.People.get(rn, {
+        personFields: 'names,emailAddresses,phoneNumbers,metadata'
+      });
+    } catch (e) {
+      Logger.log('連絡先ID取得失敗: ' + e.toString());
+    }
+  }
+  return findContact(cardData.name);
+}
+
+function syncContactAfterCardEdit(cardData, contactResourceName, rowNum) {
+  var status = '';
+  var rn = String(contactResourceName || '').trim();
+  try {
+    var person = resolveContactForUpdate(cardData, rn);
+    if (person) {
+      updateContact(person, cardData);
+      rn = person.resourceName || rn;
+      status = '連絡先を更新しました';
+    } else {
+      person = createContact(cardData);
+      rn = person && person.resourceName;
+      status = '連絡先に新規登録しました';
+    }
+    if (rn) {
+      try {
+        applyContactTags(rn, cardData.tags);
+      } catch (tagErr) {
+        status = (status || '') + ' / タグ: ' + tagErr.toString();
+      }
+      sheetGetMain().getRange(rowNum, 22).setValue(rn);
+    }
+  } catch (e) {
+    status = '連絡先同期エラー: ' + e.toString();
+  }
+  return status;
+}
+
+function sheetGetMain() {
+  var ss = SpreadsheetApp.openById(getConfigValue('SPREADSHEET_ID'));
+  return ss.getSheetByName(CONFIG.SHEET_NAME);
+}
+
+function handleUpdateCard(cardId, cardData) {
+  cardId = String(cardId || '').trim();
+  if (!cardId) {
+    return jsonResponse({ status: 'error', message: 'cardId が必要です' });
+  }
+  if (!getConfigValue('SPREADSHEET_ID') || isConfigPlaceholder(getConfigValue('SPREADSHEET_ID'))) {
+    return jsonResponse({ status: 'error', message: 'SPREADSHEET_ID が未設定です' });
+  }
+  cardData = normalizeMeishiCard(cardData || {});
+  if (!cardData.name && !cardData.company) {
+    return jsonResponse({ status: 'error', message: '氏名か会社名が必要です' });
+  }
+  var sheet = sheetGetMain();
+  if (!sheet) {
+    return jsonResponse({ status: 'error', message: 'シート「' + CONFIG.SHEET_NAME + '」が見つかりません' });
+  }
+  ensureExtendedSheetHeaders(sheet);
+  var found = findRowByCardId(sheet, cardId);
+  if (!found) {
+    return jsonResponse({ status: 'error', message: '名刺が見つかりません（ID: ' + cardId + '）' });
+  }
+  if (found.row[20] && String(found.row[20]).trim()) {
+    return jsonResponse({ status: 'error', message: 'この名刺は削除済みです' });
+  }
+  var newRow = buildEditableRowValues(found.row, cardData, cardId);
+  sheet.getRange(found.rowNum, 1, 1, MEISHI_SHEET_COLS).setValues([newRow]);
+  var contactStatus = syncContactAfterCardEdit(cardData, found.row[21], found.rowNum);
+  var updated = mapSheetRowToSearchCard(newRow);
+  updated.contactStatus = contactStatus;
+  return jsonResponse({ status: 'success', data: updated });
+}
+
+function extractDriveFileIdFromUrl(url) {
+  var s = String(url || '');
+  if (!s) return '';
+  var m = s.match(/\/file\/d\/([^/]+)/);
+  if (m) return m[1];
+  m = s.match(/[?&]id=([^&]+)/);
+  return m ? m[1] : '';
+}
+
+function trashDriveFileByUrl(url) {
+  var fileId = extractDriveFileIdFromUrl(url);
+  if (!fileId) return false;
+  try {
+    DriveApp.getFileById(fileId).setTrashed(true);
+    return true;
+  } catch (e) {
+    Logger.log('Driveゴミ箱失敗: ' + e.toString());
+    return false;
+  }
+}
+
+function ensureTrashSheet(ss) {
+  var sheet = ss.getSheetByName(TRASH_SHEET_NAME);
+  if (sheet) return sheet;
+  sheet = ss.insertSheet(TRASH_SHEET_NAME);
+  var main = ss.getSheetByName(CONFIG.SHEET_NAME);
+  if (main && main.getLastRow() >= 1) {
+    var headers = main.getRange(1, 1, 1, MEISHI_SHEET_COLS).getValues()[0];
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  }
+  return sheet;
+}
+
+function handleDeleteCard(cardId, deleteContact) {
+  cardId = String(cardId || '').trim();
+  if (!cardId) {
+    return jsonResponse({ status: 'error', message: 'cardId が必要です' });
+  }
+  if (!getConfigValue('SPREADSHEET_ID') || isConfigPlaceholder(getConfigValue('SPREADSHEET_ID'))) {
+    return jsonResponse({ status: 'error', message: 'SPREADSHEET_ID が未設定です' });
+  }
+  var ss = SpreadsheetApp.openById(getConfigValue('SPREADSHEET_ID'));
+  var sheet = ss.getSheetByName(CONFIG.SHEET_NAME);
+  if (!sheet) {
+    return jsonResponse({ status: 'error', message: 'シート「' + CONFIG.SHEET_NAME + '」が見つかりません' });
+  }
+  ensureExtendedSheetHeaders(sheet);
+  var found = findRowByCardId(sheet, cardId);
+  if (!found) {
+    return jsonResponse({ status: 'error', message: '名刺が見つかりません' });
+  }
+  if (found.row[20] && String(found.row[20]).trim()) {
+    return jsonResponse({ status: 'error', message: 'この名刺はすでに削除済みです' });
+  }
+  var deletedAt = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd HH:mm:ss');
+  var rowCopy = found.row.slice();
+  rowCopy[20] = deletedAt;
+  var trash = ensureTrashSheet(ss);
+  trash.appendRow(rowCopy);
+  sheet.getRange(found.rowNum, 21).setValue(deletedAt);
+
+  var driveNotes = [];
+  if (trashDriveFileByUrl(found.row[15])) driveNotes.push('表面画像をゴミ箱へ');
+  if (trashDriveFileByUrl(found.row[16])) driveNotes.push('裏面画像をゴミ箱へ');
+
+  var contactStatus = '';
+  var contactRn = String(found.row[21] || '').trim();
+  if (deleteContact) {
+    if (contactRn) {
+      try {
+        People.People.deleteContact(contactRn);
+        contactStatus = 'Google連絡先を削除しました';
+        sheet.getRange(found.rowNum, 22).setValue('');
+      } catch (e) {
+        contactStatus = '連絡先削除エラー: ' + e.toString();
+      }
+    } else {
+      var byName = findContact(found.row[1]);
+      if (byName && byName.resourceName) {
+        try {
+          People.People.deleteContact(byName.resourceName);
+          contactStatus = 'Google連絡先を削除しました（名前一致）';
+        } catch (e2) {
+          contactStatus = '連絡先削除エラー: ' + e2.toString();
+        }
+      } else {
+        contactStatus = '連絡先は見つかりませんでした';
+      }
+    }
+  }
+
+  return jsonResponse({
+    status: 'success',
+    data: {
+      cardId: cardId,
+      deletedAt: deletedAt,
+      driveStatus: driveNotes.join(' / '),
+      contactStatus: contactStatus
+    }
+  });
 }
 
 function normalizeTagNames(tags) {
@@ -1151,7 +1425,7 @@ function ensureMeishiSheetHeaders(sheet) {
     ]);
     return;
   }
-  ensureSheetTagHeaders(sheet);
+  ensureExtendedSheetHeaders(sheet);
 }
 
 /**

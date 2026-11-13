@@ -1,5 +1,5 @@
 /* meishi-ocr frontend v20261112a */
-const APP_VERSION = '20261112a';
+const APP_VERSION = '20261113a';
 
 const CROP_MODE_LS_KEY = 'meishi_crop_mode';
 const GUIDE_ORIENTATION_LS_KEY = 'meishi_guide_orientation';
@@ -122,6 +122,34 @@ const cardDetail = $('cardDetail');
 const cardDetailTitle = $('cardDetailTitle');
 const cardDetailBody = $('cardDetailBody');
 const cardDetailClose = $('cardDetailClose');
+const cardDetailViewBar = $('cardDetailViewBar');
+const cardBookEditForm = $('cardBookEditForm');
+const cardDeleteConfirm = $('cardDeleteConfirm');
+const btnCardEdit = $('btnCardEdit');
+const btnCardDelete = $('btnCardDelete');
+const btnBookSave = $('btnBookSave');
+const btnBookCancelEdit = $('btnBookCancelEdit');
+const bookEditTagList = $('bookEditTagList');
+const deleteContactToo = $('deleteContactToo');
+const btnConfirmDelete = $('btnConfirmDelete');
+const btnCancelDelete = $('btnCancelDelete');
+
+const BOOK_EDIT_FIELDS = [
+  { key: 'name', id: 'book-edit-name' },
+  { key: 'furigana', id: 'book-edit-furigana' },
+  { key: 'company', id: 'book-edit-company' },
+  { key: 'department', id: 'book-edit-department' },
+  { key: 'title', id: 'book-edit-title' },
+  { key: 'mobile1', id: 'book-edit-mobile1' },
+  { key: 'mobile2', id: 'book-edit-mobile2' },
+  { key: 'phone', id: 'book-edit-phone' },
+  { key: 'fax', id: 'book-edit-fax' },
+  { key: 'email1', id: 'book-edit-email1' },
+  { key: 'email2', id: 'book-edit-email2' },
+  { key: 'address', id: 'book-edit-address' },
+  { key: 'website', id: 'book-edit-website' },
+  { key: 'memo', id: 'book-edit-memo' }
+];
 
 let captureSide = 'front';
 let lastCapturedSide = 'front';
@@ -147,6 +175,9 @@ let searchTotal = 0;
 let searchHasMore = false;
 let searchLoading = false;
 let activeCardIndex = -1;
+let cardDetailMode = 'view';
+let bookEditTags = [];
+let bookCardBusy = false;
 let activeCardSide = 'front';
 let searchRequestId = 0;
 let detailReturnFocus = null;
@@ -1919,6 +1950,67 @@ const CARD_DETAIL_FIELDS = [
   ['memo', 'メモ'], ['tags', 'タグ'], ['registeredDate', '登録日']
 ];
 
+function parseTagsString(tags) {
+  return String(tags || '')
+    .split(/[,、\n]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function setCardDetailMode(mode) {
+  cardDetailMode = mode === 'edit' || mode === 'delete' ? mode : 'view';
+  if (cardDetailViewBar) cardDetailViewBar.hidden = cardDetailMode !== 'view';
+  if (cardBookEditForm) cardBookEditForm.hidden = cardDetailMode !== 'edit';
+  if (cardDeleteConfirm) cardDeleteConfirm.hidden = cardDetailMode !== 'delete';
+  if (deleteContactToo && cardDetailMode !== 'delete') deleteContactToo.checked = false;
+}
+
+function fillBookEditForm(card) {
+  BOOK_EDIT_FIELDS.forEach((f) => {
+    const el = $(f.id);
+    if (el) el.value = card[f.key] || '';
+  });
+  const rd = $('book-edit-registeredDate');
+  if (rd) rd.value = (card.registeredDate || '').slice(0, 10);
+  bookEditTags = parseTagsString(card.tags);
+  renderBookEditTagList();
+}
+
+function isBookTagSelected(name) {
+  return bookEditTags.indexOf(name) >= 0;
+}
+
+function toggleBookEditTag(name) {
+  if (!name) return;
+  const i = bookEditTags.indexOf(name);
+  if (i >= 0) bookEditTags.splice(i, 1);
+  else bookEditTags.push(name);
+  renderBookEditTagList();
+}
+
+function renderBookEditTagList() {
+  if (!bookEditTagList) return;
+  const ordered = tagCatalog.slice().sort((a, b) => {
+    if (b.memberCount !== a.memberCount) return b.memberCount - a.memberCount;
+    return String(a.name).localeCompare(String(b.name), 'ja');
+  });
+  bookEditTags.forEach((name) => {
+    if (!ordered.some((t) => t.name === name)) {
+      ordered.unshift({ name: name, memberCount: 0 });
+    }
+  });
+  if (!ordered.length) {
+    bookEditTagList.innerHTML = '<div class="tag-hint">タグはまだありません。保存時に連絡先へ反映されます。</div>';
+    return;
+  }
+  bookEditTagList.innerHTML = ordered.map((t) => {
+    const selected = isBookTagSelected(t.name) ? ' selected' : '';
+    const count = t.memberCount >= 0 ? '<span class="tag-count">' + t.memberCount + '</span>' : '';
+    return '<button type="button" class="tag-chip' + selected + '" data-book-tag="' + escapeHtml(t.name) + '">' +
+      escapeHtml(t.name) + count + '</button>';
+  }).join('');
+}
+
 function renderCardDetail() {
   const card = searchCards[activeCardIndex];
   if (!card) return;
@@ -1948,6 +2040,8 @@ function renderCardDetail() {
     (imageUrl ? '<a class="detail-original-link" href="' + escapeHtml(imageUrl) + '" target="_blank" rel="noopener">元の画像を開く</a>' : '') +
     '<dl class="detail-fields">' + fields + '</dl>';
   bindImageFallbacks(cardDetailBody);
+  setCardDetailMode(cardDetailMode === 'edit' || cardDetailMode === 'delete' ? cardDetailMode : 'view');
+  if (cardDetailMode === 'edit') fillBookEditForm(card);
 }
 
 function openCardDetail(index, source) {
@@ -1955,6 +2049,7 @@ function openCardDetail(index, source) {
   activeCardIndex = index;
   activeCardSide = searchCards[index].frontImageUrl ? 'front' : 'back';
   detailReturnFocus = source || null;
+  cardDetailMode = 'view';
   renderCardDetail();
   cardDetail.classList.add('show');
   cardDetail.setAttribute('aria-hidden', 'false');
@@ -1966,8 +2061,95 @@ function closeCardDetail() {
   cardDetail.classList.remove('show');
   cardDetail.setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
+  cardDetailMode = 'view';
+  setCardDetailMode('view');
   if (detailReturnFocus && document.contains(detailReturnFocus)) detailReturnFocus.focus();
   detailReturnFocus = null;
+}
+
+async function saveBookCardEdit() {
+  if (bookCardBusy) return;
+  const card = searchCards[activeCardIndex];
+  if (!card || !card.cardId) {
+    showError('この名刺にはカードIDがありません。名刺帳を再読み込みしてください。');
+    return;
+  }
+  const data = {};
+  BOOK_EDIT_FIELDS.forEach((f) => {
+    const el = $(f.id);
+    data[f.key] = (el && el.value) || '';
+  });
+  if (!data.name && !data.company) {
+    showError('氏名か会社名を入力してください');
+    return;
+  }
+  const rd = $('book-edit-registeredDate');
+  data.registeredDate = (rd && rd.value) || card.registeredDate || '';
+  data.tags = bookEditTags.slice();
+  bookCardBusy = true;
+  clearError();
+  if (btnBookSave) btnBookSave.disabled = true;
+  setLoading(true, '保存中…シートと連絡先を更新しています');
+  try {
+    const result = await gasFetch({ action: 'update_card', cardId: card.cardId, data: data });
+    if (!result || result.status !== 'success' || !result.data) {
+      throw new Error((result && result.message) || '保存に失敗しました');
+    }
+    Object.assign(card, result.data);
+    const query = (searchInput.value || '').trim();
+    cardDetailMode = 'view';
+    renderCardDetail();
+    renderSearchCards(query);
+    const note = result.data.contactStatus ? ' ' + result.data.contactStatus : '';
+    statusTitle.textContent = '保存しました';
+    statusMsg.textContent = (card.name || card.company || '') + note;
+    statusBox.classList.add('show');
+  } catch (err) {
+    showError('保存エラー: ' + errText(err));
+  } finally {
+    bookCardBusy = false;
+    if (btnBookSave) btnBookSave.disabled = false;
+    setLoading(false, '処理中...名刺を読み取っています');
+  }
+}
+
+async function executeCardDelete() {
+  if (bookCardBusy) return;
+  const card = searchCards[activeCardIndex];
+  if (!card || !card.cardId) {
+    showError('カードIDがありません');
+    return;
+  }
+  bookCardBusy = true;
+  clearError();
+  if (btnConfirmDelete) btnConfirmDelete.disabled = true;
+  setLoading(true, '削除中…');
+  try {
+    const result = await gasFetch({
+      action: 'delete_card',
+      cardId: card.cardId,
+      deleteContact: !!(deleteContactToo && deleteContactToo.checked)
+    });
+    if (!result || result.status !== 'success') {
+      throw new Error((result && result.message) || '削除に失敗しました');
+    }
+    const query = (searchInput.value || '').trim();
+    searchCards.splice(activeCardIndex, 1);
+    searchTotal = Math.max(0, searchTotal - 1);
+    closeCardDetail();
+    renderSearchCards(query);
+    const extra = (result.data && result.data.contactStatus) ? ' ' + result.data.contactStatus : '';
+    statusTitle.textContent = '削除しました';
+    statusMsg.textContent = (card.name || card.company || '名刺') + ' を名刺帳から除外しました。' + extra;
+    statusBox.classList.add('show');
+  } catch (err) {
+    showError('削除エラー: ' + errText(err));
+    setCardDetailMode('view');
+  } finally {
+    bookCardBusy = false;
+    if (btnConfirmDelete) btnConfirmDelete.disabled = false;
+    setLoading(false, '処理中...名刺を読み取っています');
+  }
 }
 
 async function runSearch(opts) {
@@ -2078,8 +2260,51 @@ cardDetail.addEventListener('click', (event) => {
   if (event.target === cardDetail) closeCardDetail();
 });
 document.addEventListener('keydown', (event) => {
-  if (event.key === 'Escape' && cardDetail.classList.contains('show')) closeCardDetail();
+  if (event.key === 'Escape' && cardDetail.classList.contains('show')) {
+    if (cardDetailMode === 'edit' || cardDetailMode === 'delete') {
+      cardDetailMode = 'view';
+      setCardDetailMode('view');
+      return;
+    }
+    closeCardDetail();
+  }
 });
+
+onClick(btnCardEdit, () => {
+  if (!searchCards[activeCardIndex]) return;
+  cardDetailMode = 'edit';
+  fillBookEditForm(searchCards[activeCardIndex]);
+  setCardDetailMode('edit');
+  if (!tagCatalog.length) loadContactTags().then(() => renderBookEditTagList());
+});
+
+onClick(btnCardDelete, () => {
+  if (!searchCards[activeCardIndex]) return;
+  cardDetailMode = 'delete';
+  setCardDetailMode('delete');
+});
+
+onClick(btnBookCancelEdit, () => {
+  cardDetailMode = 'view';
+  setCardDetailMode('view');
+});
+
+onClick(btnBookSave, saveBookCardEdit);
+
+onClick(btnCancelDelete, () => {
+  cardDetailMode = 'view';
+  setCardDetailMode('view');
+});
+
+onClick(btnConfirmDelete, executeCardDelete);
+
+if (bookEditTagList) {
+  bookEditTagList.addEventListener('click', (event) => {
+    const chip = event.target.closest && event.target.closest('[data-book-tag]');
+    if (!chip) return;
+    toggleBookEditTag(chip.getAttribute('data-book-tag'));
+  });
+}
 
 onClick(btnCapture, takePhoto);
 onClick(btnPickFile, () => filePicker.click());
