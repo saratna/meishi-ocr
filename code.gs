@@ -1,7 +1,7 @@
-// meishi-ocr GAS  20261114a
+// meishi-ocr GAS  20261114b
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
-var CODE_VERSION = '20261114a';
-var PWA_VERSION = '20261114a';
+var CODE_VERSION = '20261114b';
+var PWA_VERSION = '20261114b';
 
 function ShowCodeVersion() {
   Logger.log('CODE_VERSION = ' + CODE_VERSION);
@@ -93,9 +93,13 @@ function doPost(e) {
       return handleRenameTag(data.oldName, data.newName);
     } else if (action === 'delete_tag') {
       return handleDeleteTag(data.name);
-    } else {
-      // 旧互換：scan_and_save
+    } else if (action === 'scan_and_save') {
       return handleScanAndSave(data.image);
+    } else {
+      return jsonResponse({
+        status: 'error',
+        message: '未知の action: ' + action + '。code.gs を最新版に貼り替え、新バージョンで再デプロイしてください。（現在 CODE_VERSION=' + CODE_VERSION + '）'
+      });
     }
   } catch (error) {
     if (!e || !e.postData) {
@@ -1317,11 +1321,68 @@ function normalizeTagNames(tags) {
   return out;
 }
 
+function listSheetTagNames() {
+  var sheet = sheetGetMain();
+  if (!sheet) return [];
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return [];
+  var numRows = lastRow - 1;
+  var vals = sheet.getRange(2, 18, numRows, 1).getValues();
+  var names = {};
+  vals.forEach(function (row) {
+    normalizeTagNames(row[0]).forEach(function (n) {
+      names[n] = true;
+    });
+  });
+  return Object.keys(names);
+}
+
+function mergeContactAndSheetTags(groups, sheetNames) {
+  var byName = {};
+  (groups || []).forEach(function (g) {
+    if (g && g.name) byName[g.name] = g;
+  });
+  (sheetNames || []).forEach(function (n) {
+    if (!byName[n]) {
+      byName[n] = { name: n, resourceName: '', memberCount: 0, sheetOnly: true };
+    }
+  });
+  var merged = [];
+  Object.keys(byName).forEach(function (k) {
+    merged.push(byName[k]);
+  });
+  merged.sort(function (a, b) {
+    var ma = Number(a.memberCount || 0);
+    var mb = Number(b.memberCount || 0);
+    if (mb !== ma) return mb - ma;
+    return String(a.name).localeCompare(String(b.name), 'ja');
+  });
+  return merged;
+}
+
 function handleListTags() {
   try {
-    return jsonResponse({ status: 'success', data: listContactTags() });
+    var groups = listContactTags();
+    var sheetNames = listSheetTagNames();
+    return jsonResponse({ status: 'success', data: mergeContactAndSheetTags(groups, sheetNames) });
   } catch (e) {
     return jsonResponse({ status: 'error', message: 'タグ取得に失敗: ' + e.toString() });
+  }
+}
+
+function deleteContactGroupByResourceName(resourceName) {
+  var rn = String(resourceName || '').trim();
+  if (!rn) return 'resourceName がありません';
+  try {
+    People.ContactGroups.delete({ resourceName: rn });
+    return '';
+  } catch (e1) {
+    try {
+      People.ContactGroups.delete(rn);
+      return '';
+    } catch (e2) {
+      return e2.toString();
+    }
   }
 }
 
@@ -1351,7 +1412,8 @@ function forEachMainSheetTagCell(callback) {
   if (!sheet) return 0;
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return 0;
-  var vals = sheet.getRange(2, 18, lastRow - 1, 1).getValues();
+  var numRows = lastRow - 1;
+  var vals = sheet.getRange(2, 18, numRows, 1).getValues();
   var updates = 0;
   for (var i = 0; i < vals.length; i++) {
     var rowNum = i + 2;
@@ -1439,14 +1501,32 @@ function handleDeleteTag(name) {
   }
   try {
     var groups = listContactTags();
+    var sheetNames = listSheetTagNames();
+    var onSheet = sheetNames.indexOf(name) >= 0;
     var group = findContactGroupByName(name, groups);
+    var contactDeleted = false;
+    var contactError = '';
     if (group && group.resourceName) {
-      People.ContactGroups.delete(group.resourceName);
+      contactError = deleteContactGroupByResourceName(group.resourceName);
+      contactDeleted = !contactError;
+      if (contactError) {
+        return jsonResponse({
+          status: 'error',
+          message: 'Google 連絡先ラベルの削除に失敗: ' + contactError
+        });
+      }
     }
     var cardsUpdated = applyTagRemoveOnSheet(name);
+    if (!onSheet && !group && cardsUpdated === 0) {
+      return jsonResponse({ status: 'error', message: 'タグ「' + name + '」が見つかりませんでした' });
+    }
     return jsonResponse({
       status: 'success',
-      data: { name: name, cardsUpdated: cardsUpdated }
+      data: {
+        name: name,
+        cardsUpdated: cardsUpdated,
+        contactDeleted: contactDeleted || !(group && group.resourceName)
+      }
     });
   } catch (e) {
     return jsonResponse({ status: 'error', message: 'タグ削除に失敗: ' + e.toString() });

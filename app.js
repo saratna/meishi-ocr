@@ -1,5 +1,5 @@
 /* meishi-ocr frontend v20261112a */
-const APP_VERSION = '20261114a';
+const APP_VERSION = '20261114b';
 
 const CROP_MODE_LS_KEY = 'meishi_crop_mode';
 const GUIDE_ORIENTATION_LS_KEY = 'meishi_guide_orientation';
@@ -141,7 +141,13 @@ const tagManageClose = $('tagManageClose');
 const tagManageList = $('tagManageList');
 const manageTagNewInput = $('manageTagNewInput');
 const btnManageTagAdd = $('btnManageTagAdd');
+const tagDeleteConfirm = $('tagDeleteConfirm');
+const tagDeleteConfirmText = $('tagDeleteConfirmText');
+const btnTagDeleteConfirm = $('btnTagDeleteConfirm');
+const btnTagDeleteCancel = $('btnTagDeleteCancel');
 const linkTokenGenerator = $('linkTokenGenerator');
+
+const DELETED_TAGS_SESSION_KEY = 'meishi_deleted_tags';
 
 const BOOK_EDIT_FIELDS = [
   { key: 'name', id: 'book-edit-name' },
@@ -187,6 +193,7 @@ let activeCardIndex = -1;
 let cardDetailMode = 'view';
 let bookEditTags = [];
 let bookCardBusy = false;
+let pendingTagDeleteName = '';
 let activeCardSide = 'front';
 let searchRequestId = 0;
 let detailReturnFocus = null;
@@ -1646,8 +1653,56 @@ function remapSelectedTags(oldName, newName) {
   }
 }
 
+function assertTagApiResult(action, result) {
+  if (window.MeishiGasAction && MeishiGasAction.assertTagMutationResult) {
+    return MeishiGasAction.assertTagMutationResult(action, result);
+  }
+  if (!result || result.status !== 'success') {
+    throw new Error((result && result.message) || 'サーバーエラー');
+  }
+  return result.data;
+}
+
+function rememberTagDeleted(name) {
+  if (!name) return;
+  try {
+    const raw = sessionStorage.getItem(DELETED_TAGS_SESSION_KEY) || '[]';
+    const arr = JSON.parse(raw);
+    const list = Array.isArray(arr) ? arr : [];
+    if (list.indexOf(name) < 0) list.push(name);
+    sessionStorage.setItem(DELETED_TAGS_SESSION_KEY, JSON.stringify(list));
+  } catch (e) { /* ignore */ }
+}
+
+function filterBlockedTags(rows) {
+  try {
+    const raw = sessionStorage.getItem(DELETED_TAGS_SESSION_KEY) || '[]';
+    const blocked = JSON.parse(raw);
+    if (!Array.isArray(blocked) || !blocked.length) return rows;
+    const set = {};
+    blocked.forEach((n) => { set[n] = true; });
+    return rows.filter((t) => !set[t.name]);
+  } catch (e) {
+    return rows;
+  }
+}
+
+function removeTagFromCatalogLocal(name) {
+  tagCatalog = tagCatalog.filter((t) => t.name !== name);
+}
+
+function setTagDeleteConfirmVisible(show, name) {
+  pendingTagDeleteName = show ? (name || '') : '';
+  if (tagDeleteConfirm) tagDeleteConfirm.hidden = !show;
+  if (tagManageList) tagManageList.hidden = !!show;
+  if (tagDeleteConfirmText && name) {
+    tagDeleteConfirmText.innerHTML = '<strong>タグ「' + escapeHtml(name) + '」を削除しますか？</strong>';
+  }
+}
+
 function openTagManage() {
   if (!tagManage) return;
+  setTagDeleteConfirmVisible(false);
   renderTagManageList();
   tagManage.classList.add('show');
   tagManage.setAttribute('aria-hidden', 'false');
@@ -1657,6 +1712,7 @@ function openTagManage() {
 
 function closeTagManage() {
   if (!tagManage) return;
+  setTagDeleteConfirmVisible(false);
   tagManage.classList.remove('show');
   tagManage.setAttribute('aria-hidden', 'true');
   if (!cardDetail.classList.contains('show')) document.body.style.overflow = '';
@@ -1674,10 +1730,21 @@ function renderTagManageList() {
   }
   tagManageList.innerHTML = ordered.map((t) => {
     const count = t.memberCount >= 0 ? '<span class="tag-count">' + t.memberCount + '</span>' : '';
-    return '<div class="tag-manage-row"><span>' + escapeHtml(t.name) + count + '</span>' +
-      '<button type="button" class="btn-tag-action" data-tag-rename="' + escapeHtml(t.name) + '">名前変更</button>' +
-      '<button type="button" class="btn-tag-action danger" data-tag-delete="' + escapeHtml(t.name) + '">削除</button></div>';
+    const key = encodeURIComponent(t.name);
+    return '<div class="tag-manage-row" data-tag-key="' + escapeHtml(key) + '"><span>' + escapeHtml(t.name) + count + '</span>' +
+      '<button type="button" class="btn-tag-action" data-tag-rename="1">名前変更</button>' +
+      '<button type="button" class="btn-tag-action danger" data-tag-delete="1">削除</button></div>';
   }).join('');
+}
+
+function tagNameFromManageRow(el) {
+  const row = el && el.closest ? el.closest('[data-tag-key]') : null;
+  if (!row) return '';
+  try {
+    return decodeURIComponent(row.getAttribute('data-tag-key') || '');
+  } catch (e) {
+    return row.getAttribute('data-tag-key') || '';
+  }
 }
 
 async function manageTagAddFromPanel() {
@@ -1689,9 +1756,7 @@ async function manageTagAddFromPanel() {
   clearError();
   try {
     const result = await gasFetch({ action: 'create_tag', name: name });
-    if (!result || result.status !== 'success') {
-      throw new Error((result && result.message) || 'タグの追加に失敗しました');
-    }
+    assertTagApiResult('create_tag', result);
     if (manageTagNewInput) manageTagNewInput.value = '';
     await loadContactTags();
     renderTagManageList();
@@ -1716,8 +1781,9 @@ async function manageTagRename(oldName) {
   setLoading(true, 'タグ名を変更しています…');
   try {
     const result = await gasFetch({ action: 'rename_tag', oldName: oldName, newName: trimmed });
-    if (!result || result.status !== 'success') {
-      throw new Error((result && result.message) || '名前変更に失敗しました');
+    const data = assertTagApiResult('rename_tag', result);
+    if (typeof data.cardsUpdated !== 'number') {
+      throw new Error('タグ名変更の応答が不完全です。GAS を最新版に更新してください。');
     }
     remapSearchFilterTag(oldName, trimmed);
     remapSelectedTags(oldName, trimmed);
@@ -1745,21 +1811,23 @@ async function manageTagRename(oldName) {
   }
 }
 
-async function manageTagDelete(name) {
+function startTagDeleteConfirm(name) {
   if (!name) return;
-  const ok = window.confirm(
-    'タグ「' + name + '」を削除しますか？\n\n' +
-      '・Google 連絡先のラベルを削除します\n' +
-      '・名刺DBの全行からこのタグを外します\n\nこの操作は取り消せません。'
-  );
-  if (!ok) return;
+  setTagDeleteConfirmVisible(true, name);
+}
+
+async function executeTagDeleteConfirmed() {
+  const name = pendingTagDeleteName;
+  if (!name || bookCardBusy) return;
+  bookCardBusy = true;
   clearError();
+  setTagDeleteConfirmVisible(false);
   setLoading(true, 'タグを削除しています…');
   try {
     const result = await gasFetch({ action: 'delete_tag', name: name });
-    if (!result || result.status !== 'success') {
-      throw new Error((result && result.message) || 'タグ削除に失敗しました');
-    }
+    const data = assertTagApiResult('delete_tag', result);
+    rememberTagDeleted(name);
+    removeTagFromCatalogLocal(name);
     remapSearchFilterTag(name, '');
     remapSelectedTags(name, '');
     searchCards.forEach((card) => {
@@ -1773,11 +1841,16 @@ async function manageTagDelete(name) {
     renderBookEditTagList();
     runSearch({ append: false });
     statusTitle.textContent = 'タグを削除しました';
-    statusMsg.textContent = name + '（名刺 ' + (result.data && result.data.cardsUpdated) + ' 件から除去）';
+    const cardNote = typeof data.cardsUpdated === 'number' ? '名刺 ' + data.cardsUpdated + ' 件から除去' : '';
+    const contactNote = data.contactDeleted === false ? '（連絡先ラベルは残っている可能性があります）' : '';
+    statusMsg.textContent = name + (cardNote ? '：' + cardNote : '') + contactNote;
     statusBox.classList.add('show');
   } catch (err) {
     showError('タグ削除: ' + errText(err));
+    renderTagManageList();
   } finally {
+    bookCardBusy = false;
+    if (btnTagDeleteConfirm) btnTagDeleteConfirm.disabled = false;
     setLoading(false, '処理中...名刺を読み取っています');
   }
 }
@@ -1888,9 +1961,11 @@ function renderTagList() {
 async function loadContactTags() {
   try {
     const result = await gasFetch({ action: 'tags' });
-    const rows = (result && result.data) || [];
-    const extras = tagCatalog.filter((t) => t.memberCount < 0 && !rows.some((r) => r.name === t.name));
-    tagCatalog = rows.concat(extras);
+    let rows = filterBlockedTags((result && result.data) || []);
+    const extras = tagCatalog.filter((t) =>
+      t.memberCount < 0 && !rows.some((r) => r.name === t.name)
+    );
+    tagCatalog = filterBlockedTags(rows.concat(extras));
     renderTagList();
     renderSearchTagList();
   } catch (err) {
@@ -2455,6 +2530,11 @@ cardDetail.addEventListener('click', (event) => {
 });
 document.addEventListener('keydown', (event) => {
   if (event.key === 'Escape' && tagManage && tagManage.classList.contains('show')) {
+    if (pendingTagDeleteName) {
+      setTagDeleteConfirmVisible(false);
+      renderTagManageList();
+      return;
+    }
     closeTagManage();
     return;
   }
@@ -2540,10 +2620,16 @@ if (tagManageList) {
   tagManageList.addEventListener('click', (event) => {
     const renameBtn = event.target.closest && event.target.closest('[data-tag-rename]');
     const deleteBtn = event.target.closest && event.target.closest('[data-tag-delete]');
-    if (renameBtn) manageTagRename(renameBtn.getAttribute('data-tag-rename'));
-    else if (deleteBtn) manageTagDelete(deleteBtn.getAttribute('data-tag-delete'));
+    const tagName = tagNameFromManageRow(renameBtn || deleteBtn);
+    if (renameBtn && tagName) manageTagRename(tagName);
+    else if (deleteBtn && tagName) startTagDeleteConfirm(tagName);
   });
 }
+onClick(btnTagDeleteConfirm, executeTagDeleteConfirmed);
+onClick(btnTagDeleteCancel, () => {
+  setTagDeleteConfirmVisible(false);
+  renderTagManageList();
+});
 
 if (linkTokenGenerator) {
   linkTokenGenerator.addEventListener('click', () => {
