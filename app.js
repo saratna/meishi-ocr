@@ -1,5 +1,8 @@
-/* meishi-ocr frontend v20261111a */
-const APP_VERSION = '20261111a';
+/* meishi-ocr frontend v20261112a */
+const APP_VERSION = '20261112a';
+
+const CROP_MODE_LS_KEY = 'meishi_crop_mode';
+const GUIDE_ORIENTATION_LS_KEY = 'meishi_guide_orientation';
 
 const EDIT_UNDO_MAX_DEPTH = 6;
 
@@ -58,6 +61,12 @@ const FIELDS = [
 const $ = (id) => document.getElementById(id);
 const video = $('video');
 const canvas = $('canvas');
+const cameraStage = $('cameraStage');
+const captureGuide = $('captureGuide');
+const captureGuideFrame = $('captureGuideFrame');
+const guideOrientBar = $('guideOrientBar');
+const btnGuideLandscape = $('btnGuideLandscape');
+const btnGuidePortrait = $('btnGuidePortrait');
 const previewFront = $('previewFront');
 const previewBack = $('previewBack');
 const previewBackWrap = $('previewBackWrap');
@@ -288,6 +297,115 @@ function updatePreviewVisibility() {
   updateEditHistoryControls();
 }
 
+function getCropMode() {
+  const v = localStorage.getItem(CROP_MODE_LS_KEY) || 'guide';
+  return v === 'detect' ? 'detect' : 'guide';
+}
+
+function setCropMode(mode) {
+  localStorage.setItem(CROP_MODE_LS_KEY, mode === 'detect' ? 'detect' : 'guide');
+  syncCropModeUI();
+}
+
+function getGuideOrientation() {
+  const v = localStorage.getItem(GUIDE_ORIENTATION_LS_KEY) || 'landscape';
+  return v === 'portrait' ? 'portrait' : 'landscape';
+}
+
+function setGuideOrientation(orientation) {
+  localStorage.setItem(GUIDE_ORIENTATION_LS_KEY, orientation === 'portrait' ? 'portrait' : 'landscape');
+  syncGuideOrientationButtons();
+  repositionCaptureGuide();
+}
+
+function syncGuideOrientationButtons() {
+  const o = getGuideOrientation();
+  if (btnGuideLandscape) btnGuideLandscape.classList.toggle('active', o === 'landscape');
+  if (btnGuidePortrait) btnGuidePortrait.classList.toggle('active', o === 'portrait');
+}
+
+function syncCropModeUI() {
+  const mode = getCropMode();
+  document.querySelectorAll('input[name="cropMode"]').forEach((el) => {
+    el.checked = el.value === mode;
+  });
+  if (guideOrientBar) guideOrientBar.style.display = mode === 'guide' ? 'flex' : 'none';
+  if (btnAutoCrop) {
+    btnAutoCrop.textContent = mode === 'guide' ? 'ガイド枠で切り直す' : '自動で真四角';
+  }
+  updateCaptureGuideVisibility();
+}
+
+function updateCaptureGuideVisibility() {
+  if (!captureGuide) return;
+  const show = getCropMode() === 'guide' && video.style.display !== 'none';
+  captureGuide.classList.toggle('show', show);
+  captureGuide.setAttribute('aria-hidden', show ? 'false' : 'true');
+  if (show) repositionCaptureGuide();
+}
+
+function repositionCaptureGuide() {
+  if (!cameraStage || !captureGuideFrame || !window.MeishiCaptureGuide) return;
+  const w = cameraStage.clientWidth;
+  const h = cameraStage.clientHeight;
+  if (w < 20 || h < 20) return;
+  const rect = MeishiCaptureGuide.layoutGuideRect(w, h, getGuideOrientation(), 0.07);
+  captureGuideFrame.style.left = rect.left + 'px';
+  captureGuideFrame.style.top = rect.top + 'px';
+  captureGuideFrame.style.width = rect.width + 'px';
+  captureGuideFrame.style.height = rect.height + 'px';
+}
+
+function measureGuideFrameRect() {
+  if (!cameraStage || !window.MeishiCaptureGuide) return null;
+  repositionCaptureGuide();
+  return MeishiCaptureGuide.layoutGuideRect(
+    cameraStage.clientWidth,
+    cameraStage.clientHeight,
+    getGuideOrientation(),
+    0.07
+  );
+}
+
+function getVideoDisplaySize() {
+  return {
+    width: video.clientWidth || (cameraStage && cameraStage.clientWidth) || 0,
+    height: video.clientHeight || (cameraStage && cameraStage.clientHeight) || 0
+  };
+}
+
+async function cropBase64Region(base64, crop) {
+  const img = await loadImageFromBase64(base64);
+  const x = Math.max(0, Math.min(Math.floor(crop.x), img.width - 1));
+  const y = Math.max(0, Math.min(Math.floor(crop.y), img.height - 1));
+  const w = Math.max(8, Math.min(Math.floor(crop.width), img.width - x));
+  const h = Math.max(8, Math.min(Math.floor(crop.height), img.height - y));
+  const out = document.createElement('canvas');
+  out.width = w;
+  out.height = h;
+  out.getContext('2d').drawImage(img, x, y, w, h, 0, 0, w, h);
+  return canvasToJpegBase64(out, 0.92);
+}
+
+async function applyGuideCropToBase64(base64, options) {
+  options = options || {};
+  const img = await loadImageFromBase64(base64);
+  let crop;
+  if (options.source === 'camera' && options.guideRect) {
+    const display = options.displaySize || getVideoDisplaySize();
+    crop = MeishiCaptureGuide.mapGuideRectToSourceCrop(
+      options.guideRect,
+      img.width,
+      img.height,
+      display.width,
+      display.height
+    );
+  } else {
+    crop = MeishiCaptureGuide.centerGuideCropRect(img.width, img.height, getGuideOrientation(), 0.08);
+  }
+  return cropBase64Region(base64, crop);
+}
+
 function showCameraFor(side) {
   captureSide = side;
   clearError();
@@ -305,6 +423,7 @@ function showCameraFor(side) {
   btnCapture.textContent = side === 'back' ? '裏面を撮影する' : '表面を撮影する';
   captureLabel.textContent = side === 'back' ? '裏面を撮影' : '表面を撮影';
   captureHint.classList.toggle('show', side === 'back' && !!imageFront);
+  updateCaptureGuideVisibility();
 }
 
 function showPostCaptureActions() {
@@ -318,6 +437,10 @@ function showPostCaptureActions() {
   btnRetry.disabled = false;
   setToolsVisible(true);
   updatePreviewVisibility();
+  if (captureGuide) {
+    captureGuide.classList.remove('show');
+    captureGuide.setAttribute('aria-hidden', 'true');
+  }
 }
 
 function getActiveCropSide() {
@@ -631,8 +754,10 @@ async function startCamera() {
     try {
       await waitForVideoReady(4000);
       captureLabel.textContent = captureSide === 'back' ? '裏面を撮影' : '表面を撮影（準備完了）';
+      updateCaptureGuideVisibility();
     } catch (e) {
       captureLabel.textContent = '映像準備中でも撮影できます';
+      updateCaptureGuideVisibility();
     }
   } catch (err) {
     btnCapture.textContent = 'カメラを再試行';
@@ -692,21 +817,28 @@ async function captureFrameFromVideo() {
   return canvasToJpegBase64(canvas, 0.9);
 }
 
-async function applyCapturedImage(base64) {
-  let next = await resizeBase64(base64, 2000, 0.9);
+async function applyCapturedImage(base64, captureOptions) {
+  captureOptions = captureOptions || {};
+  const fullBase64 = await resizeBase64(base64, 2000, 0.9);
   const sideKey = captureSide === 'back' ? 'back' : 'front';
-  if (!skipAutoLandscape[sideKey]) {
-    next = await ensureLandscapeBase64(next);
+  const useGuide = getCropMode() === 'guide';
+  let working = fullBase64;
+
+  if (useGuide) {
+    working = await applyGuideCropToBase64(fullBase64, captureOptions);
+    skipAutoLandscape[sideKey] = true;
+  } else if (!skipAutoLandscape[sideKey]) {
+    working = await ensureLandscapeBase64(fullBase64);
+    skipAutoLandscape[sideKey] = false;
   }
-  skipAutoLandscape[sideKey] = false;
 
   if (captureSide === 'back') {
-    assignSideImage(next, 'back');
-    setCaptureOriginalForSide('back', next);
+    setCaptureOriginalForSide('back', fullBase64);
+    assignSideImage(working, 'back');
     lastCapturedSide = 'back';
   } else {
-    assignSideImage(next, 'front');
-    setCaptureOriginalForSide('front', next);
+    setCaptureOriginalForSide('front', fullBase64);
+    assignSideImage(working, 'front');
     imageBack = '';
     resetCaptureEditHistory('back');
     lastCapturedSide = 'front';
@@ -716,9 +848,15 @@ async function applyCapturedImage(base64) {
   }
   showPostCaptureActions();
   updateEditHistoryControls();
-  captureLabel.textContent = captureSide === 'back'
-    ? '表・裏 撮影済み'
-    : '表面 撮影済み（裏面は任意）';
+  if (useGuide) {
+    captureLabel.textContent = captureSide === 'back'
+      ? '裏面をガイド枠で切り取りました'
+      : '表面をガイド枠で切り取りました';
+  } else {
+    captureLabel.textContent = captureSide === 'back'
+      ? '表・裏 撮影済み'
+      : '表面 撮影済み（裏面は任意）';
+  }
 }
 
 function openNativeCamera() {
@@ -769,8 +907,14 @@ async function takePhoto(ev) {
       await Promise.race([video.play().catch(() => null), sleep(800)]);
     }
     captureLabel.textContent = '撮影しています...';
+    const guideRect = getCropMode() === 'guide' ? measureGuideFrameRect() : null;
+    const displaySize = getVideoDisplaySize();
     const base64 = await captureFrameFromVideo();
-    await applyCapturedImage(base64);
+    await applyCapturedImage(base64, {
+      source: 'camera',
+      guideRect: guideRect,
+      displaySize: displaySize
+    });
   } catch (err) {
     showError('撮影に失敗しました: ' + errText(err));
     btnCapture.style.display = 'block';
@@ -800,7 +944,7 @@ async function handlePickedFile(file) {
   out.height = img.height;
   out.getContext('2d').drawImage(img, 0, 0);
   const base64 = canvasToJpegBase64(out, 0.9);
-  await applyCapturedImage(base64);
+  await applyCapturedImage(base64, { source: 'file' });
 }
 
 async function rotateMeishi(degrees) {
@@ -1053,8 +1197,45 @@ async function cropSquareRegion(base64, square) {
   return canvasToJpegBase64(out, 0.92);
 }
 
+async function reapplyGuideCropFromOriginal() {
+  const side = getActiveCropSide();
+  if (!side) {
+    showError('先に名刺を撮影してください');
+    return;
+  }
+  const history = getSideHistory(side);
+  const source = MeishiEditHistory.getOriginal(history) || getSideImageBase64(side);
+  if (!source) {
+    showError('切り直す元画像がありません');
+    return;
+  }
+  cropBusy = true;
+  clearError();
+  captureLabel.textContent = 'ガイド枠で切り直しています...';
+  setLoading(true, 'ガイド枠で切り直しています');
+  try {
+    rememberEditMutation(side);
+    const next = await applyGuideCropToBase64(source, { source: 'center' });
+    assignSideImage(next, side);
+    lastCapturedSide = side;
+    updatePreviewVisibility();
+    updateEditHistoryControls();
+    setToolsVisible(true);
+    captureLabel.textContent = 'ガイド枠で切り直しました';
+  } catch (err) {
+    showError('ガイド枠の切り直しに失敗しました: ' + errText(err));
+  } finally {
+    cropBusy = false;
+    setLoading(false);
+  }
+}
+
 async function autoCropMeishi() {
   if (cropBusy) return;
+  if (getCropMode() === 'guide') {
+    await reapplyGuideCropFromOriginal();
+    return;
+  }
   const side = getActiveCropSide();
   const base64 = getActiveCropBase64();
   if (!side || !base64) {
@@ -2004,6 +2185,23 @@ if (btnClearSearchTags) {
 initSearchSortControl();
 loadSearchFilterTagsFromStorage();
 syncSearchTagModeControls();
+
+document.querySelectorAll('input[name="cropMode"]').forEach((el) => {
+  el.addEventListener('change', () => {
+    if (el.checked) setCropMode(el.value);
+  });
+});
+if (btnGuideLandscape) {
+  btnGuideLandscape.addEventListener('click', () => setGuideOrientation('landscape'));
+}
+if (btnGuidePortrait) {
+  btnGuidePortrait.addEventListener('click', () => setGuideOrientation('portrait'));
+}
+syncGuideOrientationButtons();
+syncCropModeUI();
+window.addEventListener('resize', () => {
+  if (captureGuide && captureGuide.classList.contains('show')) repositionCaptureGuide();
+});
 
 showCameraFor('front');
 if (window.MeishiConfig && window.MeishiConfig.isConfigured()) {

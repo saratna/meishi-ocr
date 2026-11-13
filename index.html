@@ -34,13 +34,90 @@
       max-width: 400px;
       margin-bottom: 12px;
     }
+    .camera-stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      max-height: min(72dvh, 520px);
+      border-radius: 12px;
+      overflow: hidden;
+      background: #000;
+    }
     #video {
       width: 100%;
-      border-radius: 12px;
+      height: 100%;
       display: block;
       background: #000;
-      min-height: 220px;
       object-fit: cover;
+    }
+    .capture-guide {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+    }
+    .capture-guide.show { display: block; }
+    .capture-guide-frame {
+      position: absolute;
+      border: 2px solid #e94560;
+      border-radius: 6px;
+      box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.45);
+      background: transparent;
+    }
+    .capture-guide-label {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: -28px;
+      text-align: center;
+      font-size: 0.72rem;
+      color: #ffe8ec;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+      letter-spacing: 0.04em;
+    }
+    .capture-mode-bar {
+      width: 100%;
+      max-width: 400px;
+      background: #121a30;
+      border: 1px solid #2a3552;
+      border-radius: 12px;
+      padding: 10px 12px;
+      margin-bottom: 10px;
+      font-size: 0.84rem;
+      color: #c5cad6;
+    }
+    .capture-mode-bar legend { color: #e94560; font-size: 0.82rem; padding: 0 4px; }
+    .capture-mode-options {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    .capture-mode-options label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+    }
+    .guide-orient {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .guide-orient button {
+      flex: 1;
+      padding: 9px 10px;
+      border-radius: 10px;
+      border: 1px solid #36415f;
+      background: #18223b;
+      color: #dbe2f0;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .guide-orient button.active {
+      border-color: #e94560;
+      background: #2a1b2a;
+      color: #fff;
     }
     #canvas { display: none; }
     .preview-img {
@@ -659,7 +736,7 @@
 </head>
 <body>
   <h1>名刺OCR</h1>
-  <p class="app-ver">v20261111a</p>
+  <p class="app-ver">v20261112a</p>
 
   <div class="tabs">
     <button class="tab active" type="button" data-tab="scan">スキャン</button>
@@ -670,8 +747,26 @@
     <div class="capture-label" id="captureLabel">表面を撮影</div>
     <div class="capture-hint" id="captureHint">表は撮影済み。裏面を写して撮影してください</div>
     <div class="error-banner" id="errorBanner"></div>
+    <fieldset class="capture-mode-bar">
+      <legend>切り取り方法</legend>
+      <div class="capture-mode-options">
+        <label><input type="radio" name="cropMode" value="guide" checked> ガイド枠（推奨・枠に合わせて撮影）</label>
+        <label><input type="radio" name="cropMode" value="detect"> 従来の自動検出（撮影後に補正）</label>
+      </div>
+      <div class="guide-orient" id="guideOrientBar">
+        <button type="button" id="btnGuideLandscape" class="active">横名刺</button>
+        <button type="button" id="btnGuidePortrait">縦名刺</button>
+      </div>
+    </fieldset>
     <div class="camera-area">
-      <video id="video" autoplay playsinline muted></video>
+      <div class="camera-stage" id="cameraStage">
+        <video id="video" autoplay playsinline muted></video>
+        <div id="captureGuide" class="capture-guide" aria-hidden="true">
+          <div id="captureGuideFrame" class="capture-guide-frame">
+            <span class="capture-guide-label">名刺を枠に合わせる</span>
+          </div>
+        </div>
+      </div>
       <canvas id="canvas"></canvas>
     </div>
 
@@ -696,7 +791,7 @@
       <button id="btnRotateRight" class="btn btn-rotate" type="button">右に90°</button>
     </div>
     <div class="crop-tools" id="cropTools">
-      <button id="btnAutoCrop" class="btn btn-autocrop" type="button">自動で真四角</button>
+      <button id="btnAutoCrop" class="btn btn-autocrop" type="button">ガイド枠で切り直す</button>
       <button id="btnCropSquare" class="btn btn-crop" type="button">正方形で切る</button>
       <button id="btnCropQuad" class="btn btn-crop" type="button">4点で切る</button>
     </div>
@@ -826,10 +921,11 @@
     </div>
   </div>
 
-  <script src="config.js?v=20261111a"></script>
-  <script src="lib/card-normalize.js?v=20261111a"></script>
-  <script src="lib/meishi-crop.js?v=20261111a"></script>
-  <script src="lib/image-edit-history.js?v=20261111a"></script>
-  <script src="app.js?v=20261111a"></script>
+  <script src="config.js?v=20261112a"></script>
+  <script src="lib/card-normalize.js?v=20261112a"></script>
+  <script src="lib/meishi-crop.js?v=20261112a"></script>
+  <script src="lib/capture-guide.js?v=20261112a"></script>
+  <script src="lib/image-edit-history.js?v=20261112a"></script>
+  <script src="app.js?v=20261112a"></script>
 </body>
 </html>
