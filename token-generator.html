@@ -47,6 +47,28 @@
     }
     .btn-primary { background: #e94560; color: #fff; }
     .btn-secondary { background: #0f3460; color: #fff; }
+    .btn-back {
+      display: block;
+      text-align: center;
+      text-decoration: none;
+      padding: 16px 18px;
+      border-radius: 14px;
+      background: #1a2d4f;
+      color: #dbe6ff;
+      border: 1px solid #3a4f7a;
+      font-size: 1.05rem;
+      font-weight: bold;
+      margin-bottom: 20px;
+    }
+    .back-bar-bottom {
+      position: sticky;
+      bottom: 0;
+      margin: 28px -24px -24px;
+      padding: 16px 24px calc(16px + env(safe-area-inset-bottom, 0px));
+      background: rgba(26, 26, 46, 0.96);
+      border-top: 1px solid #333;
+    }
+    .back-bar-bottom .btn-back { margin-bottom: 0; }
     .hint {
       background: #16213e;
       border-radius: 10px;
@@ -62,6 +84,7 @@
   </style>
 </head>
 <body>
+  <a href="index.html" class="btn btn-back" id="btnBackAppTop">← 名刺OCRに戻る</a>
   <h1>APIトークン生成</h1>
   <p>
     GAS（Script Properties）と PWA の<strong>接続設定</strong>に入れる
@@ -103,7 +126,24 @@
     ※ このページはブラウザ内だけで動作します。
   </div>
 
+  <div class="back-bar-bottom">
+    <a href="index.html" class="btn btn-back" id="btnBackAppBottom">← 名刺OCRに戻る</a>
+  </div>
+
   <script>
+    (function initBackLinks() {
+      var returnUrl = 'index.html';
+      try {
+        var tab = sessionStorage.getItem('meishi_return_tab');
+        if (tab === 'search') returnUrl = 'index.html?tab=search';
+      } catch (e) { /* ignore */ }
+      var params = new URLSearchParams(window.location.search);
+      if (params.get('return')) returnUrl = params.get('return');
+      ['btnBackAppTop', 'btnBackAppBottom'].forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) el.setAttribute('href', returnUrl);
+      });
+    })();
     function generateToken(length) {
       const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
       const bytes = new Uint8Array(length);

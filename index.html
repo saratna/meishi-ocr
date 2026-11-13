@@ -696,9 +696,106 @@
     }
     .card-delete-actions { display: flex; gap: 10px; }
     .card-delete-actions .btn { flex: 1; margin: 0; }
-  .card-book-edit[hidden],
+    .card-book-edit[hidden],
     .card-delete-confirm[hidden],
     .card-detail-actions[hidden] { display: none !important; }
+    .search-toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      width: 100%;
+      max-width: 760px;
+      margin-bottom: 10px;
+    }
+    .btn-manage-tags {
+      flex: 1;
+      min-width: 9rem;
+      padding: 11px 14px;
+      border-radius: 10px;
+      border: 1px solid #3a4f7a;
+      background: #1a2d4f;
+      color: #dbe6ff;
+      font-size: 0.9rem;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .tag-manage-backdrop {
+      position: fixed;
+      inset: 0;
+      z-index: 950;
+      display: none;
+      align-items: flex-end;
+      justify-content: center;
+      padding: 0;
+      background: rgba(5, 8, 18, 0.84);
+      backdrop-filter: blur(8px);
+    }
+    .tag-manage-backdrop.show { display: flex; }
+    .tag-manage-panel {
+      width: min(760px, 100%);
+      max-height: 92dvh;
+      overflow: auto;
+      background: #121a30;
+      border: 1px solid #303c5d;
+      border-radius: 20px 20px 0 0;
+      box-shadow: 0 -8px 40px rgba(0, 0, 0, 0.45);
+      padding-bottom: env(safe-area-inset-bottom, 12px);
+    }
+    @media (min-width: 560px) {
+      .tag-manage-backdrop { align-items: center; padding: 20px; }
+      .tag-manage-panel { border-radius: 20px; max-height: 88dvh; }
+    }
+    .tag-manage-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid #2a3552;
+      position: sticky;
+      top: 0;
+      background: rgba(18, 26, 48, 0.96);
+      z-index: 1;
+    }
+    .tag-manage-body { padding: 16px 18px 20px; }
+    .tag-manage-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto auto;
+      gap: 8px;
+      align-items: center;
+      padding: 10px 0;
+      border-bottom: 1px solid #27324d;
+    }
+    .tag-manage-row span { font-size: 0.95rem; }
+    .tag-manage-row .tag-count { color: #8b94a8; font-size: 0.8rem; margin-left: 6px; }
+    .btn-tag-action {
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid #44506e;
+      background: #1b2744;
+      color: #dbe2f0;
+      font-size: 0.78rem;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .btn-tag-action.danger { border-color: #7a3a4a; color: #f5c4ce; }
+    .tag-manage-add { display: flex; gap: 8px; margin-bottom: 16px; }
+    .tag-manage-add input { flex: 1; }
+    .app-page-footer {
+      position: sticky;
+      bottom: 0;
+      z-index: 50;
+      width: 100%;
+      max-width: 760px;
+      margin-top: 20px;
+      padding: 14px 12px calc(14px + env(safe-area-inset-bottom, 0px));
+      background: rgba(26, 26, 46, 0.96);
+      border-top: 1px solid #2a3552;
+      text-align: center;
+      font-size: 0.85rem;
+    }
+    .app-page-footer a { color: #6cb6ff; margin: 0 8px; }
     #tab-search { max-width: 760px; }
     #tab-scan.reviewing .preview-pair {
       position: sticky;
@@ -896,9 +993,12 @@
 
   <div id="tab-search" class="tab-content">
     <div class="search-toolbar">
-      <div class="search-sort">
-        <label for="searchSort">並べ替え</label>
-        <select id="searchSort" aria-label="名刺の並べ替え"></select>
+      <div class="search-toolbar-row">
+        <div class="search-sort" style="flex:1;min-width:12rem;margin:0">
+          <label for="searchSort">並べ替え</label>
+          <select id="searchSort" aria-label="名刺の並べ替え"></select>
+        </div>
+        <button type="button" id="btnManageTags" class="btn-manage-tags">タグを管理</button>
       </div>
     </div>
     <div class="search-tag-filter">
@@ -957,6 +1057,10 @@
             <label>タグ</label>
             <p class="tag-hint">Google連絡先ラベルと同期します。タップで選択／解除。</p>
             <div id="bookEditTagList" class="tag-list"></div>
+            <div class="tag-add-row">
+              <input type="text" id="bookNewTagInput" placeholder="新しいタグ名" autocomplete="off">
+              <button id="btnBookAddTag" class="btn btn-add-tag" type="button">追加</button>
+            </div>
           </div>
           <div class="card-book-edit-actions">
             <button type="button" id="btnBookSave" class="btn btn-save">保存</button>
@@ -975,11 +1079,28 @@
     </section>
   </div>
 
-  <p style="margin-top:24px;font-size:0.85rem;color:#666;text-align:center;">
-    <a href="#" id="openSetup" style="color:#6cb6ff;">接続設定</a>
+  <footer class="app-page-footer" id="appPageFooter">
+    <a href="#" id="openSetup">接続設定</a>
     ·
-    <a href="token-generator.html" style="color:#6cb6ff;">トークン生成</a>
-  </p>
+    <a href="token-generator.html" id="linkTokenGenerator">トークン生成</a>
+  </footer>
+
+  <div id="tagManage" class="tag-manage-backdrop" aria-hidden="true">
+    <section class="tag-manage-panel" role="dialog" aria-modal="true" aria-labelledby="tagManageTitle">
+      <header class="tag-manage-header">
+        <h2 id="tagManageTitle" style="font-size:1.1rem">タグの管理</h2>
+        <button type="button" id="tagManageClose" class="card-detail-close" aria-label="閉じる">×</button>
+      </header>
+      <div class="tag-manage-body">
+        <p class="tag-hint">名前変更・削除はシートの R 列（全名刺）に反映されます。削除は Google 連絡先ラベルも消します。</p>
+        <div class="tag-manage-add">
+          <input type="text" id="manageTagNewInput" placeholder="新しいタグ名" autocomplete="off">
+          <button type="button" id="btnManageTagAdd" class="btn btn-add-tag">追加</button>
+        </div>
+        <div id="tagManageList"></div>
+      </div>
+    </section>
+  </div>
 
   <div id="setupPanel" class="setup-panel" aria-hidden="true">
     <div class="setup-card" role="dialog" aria-labelledby="setupTitle">
@@ -1016,6 +1137,6 @@
   <script src="lib/meishi-crop.js?v=20261112a"></script>
   <script src="lib/capture-guide.js?v=20261112a"></script>
   <script src="lib/image-edit-history.js?v=20261112a"></script>
-  <script src="app.js?v=20261113a"></script>
+  <script src="app.js?v=20261114a"></script>
 </body>
 </html>
