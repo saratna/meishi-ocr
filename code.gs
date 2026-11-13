@@ -1,7 +1,7 @@
 // meishi-ocr GAS  20261114c
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
 var CODE_VERSION = '20261114c';
-var PWA_VERSION = '20261114c';
+var PWA_VERSION = '20261114d';
 
 function ShowCodeVersion() {
   Logger.log('CODE_VERSION = ' + CODE_VERSION);
