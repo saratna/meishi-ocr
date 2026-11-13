@@ -1,5 +1,5 @@
 /* meishi-ocr frontend v20261112a */
-const APP_VERSION = '20261114c';
+const APP_VERSION = '20261114d';
 
 const CROP_MODE_LS_KEY = 'meishi_crop_mode';
 const GUIDE_ORIENTATION_LS_KEY = 'meishi_guide_orientation';
@@ -75,10 +75,14 @@ const captureLabel = $('captureLabel');
 const captureHint = $('captureHint');
 const errorBanner = $('errorBanner');
 const globalErrorBanner = $('globalErrorBanner');
+const globalErrorBannerText = $('globalErrorBannerText');
+const globalErrorBannerClose = $('globalErrorBannerClose');
 const globalLoading = $('globalLoading');
 const globalStatus = $('globalStatus');
 const globalStatusTitle = $('globalStatusTitle');
 const globalStatusMsg = $('globalStatusMsg');
+const globalStatusClose = $('globalStatusClose');
+const statusClose = $('statusClose');
 const btnCapture = $('btnCapture');
 const btnPickFile = $('btnPickFile');
 const cameraCapture = $('cameraCapture');
@@ -202,6 +206,10 @@ let cardDetailMode = 'view';
 let bookEditTags = [];
 let bookCardBusy = false;
 let pendingTagDeleteName = '';
+let lastTagFeedbackKind = '';
+const toastScheduler = (window.MeishiToastSchedule && MeishiToastSchedule.createToastDismissScheduler)
+  ? MeishiToastSchedule.createToastDismissScheduler(MeishiToastSchedule.DEFAULT_SUCCESS_MS)
+  : { cancelAndBump: function () {}, scheduleSuccess: function () {} };
 let activeCardSide = 'front';
 let searchRequestId = 0;
 let detailReturnFocus = null;
@@ -234,7 +242,13 @@ function errText(err) {
 
 function showTagManageMessage(text, kind) {
   if (!tagManageFeedback || !text) return;
-  tagManageFeedback.textContent = text;
+  lastTagFeedbackKind = kind || 'info';
+  const showClose = kind === 'error' || kind === 'success';
+  tagManageFeedback.innerHTML =
+    '<span class="toast-text">' + escapeHtml(text) + '</span>' +
+    (showClose
+      ? '<button type="button" class="toast-close" data-dismiss-tag-feedback aria-label="閉じる">×</button>'
+      : '');
   tagManageFeedback.className = 'tag-manage-feedback ' + (kind || 'info');
   tagManageFeedback.hidden = false;
 }
@@ -243,6 +257,7 @@ function clearTagManageMessage() {
   if (!tagManageFeedback) return;
   tagManageFeedback.textContent = '';
   tagManageFeedback.hidden = true;
+  lastTagFeedbackKind = '';
 }
 
 function showGlobalStatus(title, msg) {
@@ -252,17 +267,55 @@ function showGlobalStatus(title, msg) {
 }
 
 function hideGlobalStatus() {
-  showGlobalStatus('', '');
+  if (globalStatusTitle) globalStatusTitle.textContent = '';
+  if (globalStatusMsg) globalStatusMsg.textContent = '';
+  if (globalStatus) globalStatus.hidden = true;
+}
+
+function dismissSuccessToasts() {
+  toastScheduler.cancelAndBump();
+  hideGlobalStatus();
+  if (statusBox) statusBox.classList.remove('show');
+  if (lastTagFeedbackKind === 'success' || lastTagFeedbackKind === 'info') clearTagManageMessage();
+}
+
+function dismissSuccessToastsKeepPanelError() {
+  toastScheduler.cancelAndBump();
+  hideGlobalStatus();
+  if (statusBox) statusBox.classList.remove('show');
+  if (lastTagFeedbackKind !== 'error') clearTagManageMessage();
+}
+
+function showAppSuccess(title, msg, options) {
+  options = options || {};
+  const body = String(msg || '');
+  const panelText = options.panelMsg != null ? String(options.panelMsg) : body;
+  const panelKind = options.panelKind || 'success';
+  toastScheduler.cancelAndBump();
+  if (options.useTagPanel) {
+    showTagManageMessage(panelText, panelKind);
+  }
+  if (options.useGlobal !== false) showGlobalStatus(title, body);
+  if (options.useScanStatus && statusTitle && statusMsg && statusBox) {
+    statusTitle.textContent = title;
+    statusMsg.textContent = body;
+    statusBox.classList.add('show');
+  }
+  toastScheduler.scheduleSuccess(function () {
+    if (panelKind === 'error') dismissSuccessToastsKeepPanelError();
+    else dismissSuccessToasts();
+  });
 }
 
 function showError(msg) {
+  toastScheduler.cancelAndBump();
   const text = errText(msg);
-  [errorBanner, globalErrorBanner].forEach((el) => {
-    if (el) {
-      el.textContent = text;
-      el.classList.add('show');
-    }
-  });
+  if (errorBanner) {
+    errorBanner.textContent = text;
+    errorBanner.classList.add('show');
+  }
+  if (globalErrorBannerText) globalErrorBannerText.textContent = text;
+  if (globalErrorBanner) globalErrorBanner.classList.add('show');
   if (tagManage && tagManage.classList.contains('show')) {
     showTagManageMessage(text, 'error');
   }
@@ -273,13 +326,13 @@ function showError(msg) {
 }
 
 function clearError() {
-  [errorBanner, globalErrorBanner].forEach((el) => {
-    if (el) {
-      el.textContent = '';
-      el.classList.remove('show');
-    }
-  });
-  clearTagManageMessage();
+  if (errorBanner) {
+    errorBanner.textContent = '';
+    errorBanner.classList.remove('show');
+  }
+  if (globalErrorBannerText) globalErrorBannerText.textContent = '';
+  if (globalErrorBanner) globalErrorBanner.classList.remove('show');
+  if (lastTagFeedbackKind === 'error') clearTagManageMessage();
 }
 
 function setLoading(on, text) {
@@ -294,6 +347,8 @@ function setLoading(on, text) {
   }
   if (on && tagManage && tagManage.classList.contains('show')) {
     showTagManageMessage(label, 'info');
+  } else if (!on && lastTagFeedbackKind === 'info') {
+    clearTagManageMessage();
   }
 }
 
@@ -1768,6 +1823,7 @@ function openTagManage() {
 
 function closeTagManage() {
   if (!tagManage) return;
+  dismissSuccessToasts();
   setTagDeleteConfirmVisible(false);
   tagManage.classList.remove('show');
   tagManage.setAttribute('aria-hidden', 'true');
@@ -1859,13 +1915,13 @@ async function manageTagRename(oldName) {
     runSearch({ append: false });
     let okMsg = oldName + ' → ' + trimmed + '（名刺 ' + data.cardsUpdated + ' 件）';
     if (data.contactError) okMsg += '\n連絡先: ' + data.contactError;
-    showTagManageMessage(okMsg, data.contactError ? 'error' : 'success');
-    showGlobalStatus('タグを変更しました', okMsg.replace(/\n/g, ' '));
-    if (statusTitle && statusMsg && statusBox) {
-      statusTitle.textContent = 'タグを変更しました';
-      statusMsg.textContent = okMsg.replace(/\n/g, ' ');
-      statusBox.classList.add('show');
-    }
+    showAppSuccess('タグを変更しました', okMsg.replace(/\n/g, ' '), {
+      useTagPanel: true,
+      panelMsg: okMsg,
+      panelKind: data.contactError ? 'error' : 'success',
+      useGlobal: true,
+      useScanStatus: false
+    });
   } catch (err) {
     showError('タグ名変更: ' + errText(err));
   } finally {
@@ -1907,21 +1963,20 @@ async function executeTagDeleteConfirmed() {
     runSearch({ append: false });
     const cardNote = typeof data.cardsUpdated === 'number' ? '名刺 ' + data.cardsUpdated + ' 件から除去' : '';
     let msg = 'タグ「' + name + '」を削除しました。' + (cardNote ? cardNote + '。' : '');
+    let panelKind = 'success';
     if (data.contactError) {
       msg += '\n連絡先ラベル: ' + data.contactError;
-      showTagManageMessage(msg, 'error');
+      panelKind = 'error';
     } else if (data.contactDeleted === false) {
       msg += '\n連絡先ラベルは未削除の可能性があります。';
-      showTagManageMessage(msg, 'success');
-    } else {
-      showTagManageMessage(msg, 'success');
     }
-    showGlobalStatus('タグを削除しました', msg.replace(/\n/g, ' '));
-    if (statusTitle && statusMsg && statusBox) {
-      statusTitle.textContent = 'タグを削除しました';
-      statusMsg.textContent = msg.replace(/\n/g, ' ');
-      statusBox.classList.add('show');
-    }
+    showAppSuccess('タグを削除しました', msg.replace(/\n/g, ' '), {
+      useTagPanel: true,
+      panelMsg: msg,
+      panelKind: panelKind,
+      useGlobal: true,
+      useScanStatus: false
+    });
   } catch (err) {
     setTagDeleteConfirmVisible(false);
     const text = 'タグ削除: ' + errText(err);
@@ -2120,12 +2175,11 @@ async function startMeishiScan() {
     renderTagList();
     loadContactTags();
     if (faceImage) {
-      statusTitle.textContent = '顔を検出';
-      statusMsg.textContent = (faceSide === 'back' ? '裏面' : '表面') +
+      const faceMsg = (faceSide === 'back' ? '裏面' : '表面') +
         'の顔写真を検出しました。登録時に連絡先へ反映します。';
-      statusBox.classList.add('show');
+      showAppSuccess('顔を検出', faceMsg, { useGlobal: false, useScanStatus: true });
     } else {
-      statusBox.classList.remove('show');
+      dismissSuccessToasts();
     }
   } catch (err) {
     showError('読み取りエラー: ' + errText(err));
@@ -2169,9 +2223,11 @@ async function saveCard() {
     const contactNote = result.data && result.data.contactStatus
       ? '（' + result.data.contactStatus + '）'
       : '';
-    statusTitle.textContent = '登録完了';
-    statusMsg.textContent = (cardData.name || '') + ' / ' + (cardData.company || '') + contactNote;
-    statusBox.classList.add('show');
+    showAppSuccess(
+      '登録完了',
+      (cardData.name || '') + ' / ' + (cardData.company || '') + contactNote,
+      { useGlobal: true, useScanStatus: true }
+    );
     captureLabel.textContent = '登録しました';
     btnCaptureBack.classList.add('is-hidden');
     actionTools.classList.add('show');
@@ -2407,6 +2463,7 @@ function openCardDetail(index, source) {
 }
 
 function closeCardDetail() {
+  dismissSuccessToasts();
   cardDetail.classList.remove('show');
   cardDetail.setAttribute('aria-hidden', 'true');
   document.body.style.overflow = '';
@@ -2450,9 +2507,10 @@ async function saveBookCardEdit() {
     renderCardDetail();
     renderSearchCards(query);
     const note = result.data.contactStatus ? ' ' + result.data.contactStatus : '';
-    statusTitle.textContent = '保存しました';
-    statusMsg.textContent = (card.name || card.company || '') + note;
-    statusBox.classList.add('show');
+    showAppSuccess('保存しました', (card.name || card.company || '') + note, {
+      useGlobal: true,
+      useScanStatus: false
+    });
   } catch (err) {
     showError('保存エラー: ' + errText(err));
   } finally {
@@ -2488,9 +2546,11 @@ async function executeCardDelete() {
     closeCardDetail();
     renderSearchCards(query);
     const extra = (result.data && result.data.contactStatus) ? ' ' + result.data.contactStatus : '';
-    statusTitle.textContent = '削除しました';
-    statusMsg.textContent = (card.name || card.company || '名刺') + ' を名刺帳から除外しました。' + extra;
-    statusBox.classList.add('show');
+    showAppSuccess(
+      '削除しました',
+      (card.name || card.company || '名刺') + ' を名刺帳から除外しました。' + extra,
+      { useGlobal: true, useScanStatus: false }
+    );
   } catch (err) {
     showError('削除エラー: ' + errText(err));
     setCardDetailMode('view');
@@ -2564,6 +2624,7 @@ async function runSearch(opts) {
 
 document.querySelectorAll('.tab').forEach((tab) => {
   tab.addEventListener('click', () => {
+    dismissSuccessToasts();
     document.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
     tab.classList.add('active');
@@ -2862,6 +2923,25 @@ if (window.MeishiConfig && window.MeishiConfig.isConfigured()) {
 }
 
 initSetupPanel();
+
+function initToastDismissControls() {
+  onClick(globalStatusClose, dismissSuccessToasts);
+  onClick(globalErrorBannerClose, clearError);
+  onClick(statusClose, function () {
+    toastScheduler.cancelAndBump();
+    hideGlobalStatus();
+    if (statusBox) statusBox.classList.remove('show');
+  });
+  if (tagManageFeedback) {
+    tagManageFeedback.addEventListener('click', function (ev) {
+      const btn = ev.target.closest && ev.target.closest('[data-dismiss-tag-feedback]');
+      if (!btn) return;
+      clearTagManageMessage();
+    });
+  }
+}
+initToastDismissControls();
+
 console.log('meishi-ocr', APP_VERSION);
 
 (function showVersions() {
