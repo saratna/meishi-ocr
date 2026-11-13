@@ -1,5 +1,5 @@
 /* meishi-ocr frontend v20261112a */
-const APP_VERSION = '20261113a';
+const APP_VERSION = '20261114a';
 
 const CROP_MODE_LS_KEY = 'meishi_crop_mode';
 const GUIDE_ORIENTATION_LS_KEY = 'meishi_guide_orientation';
@@ -133,6 +133,15 @@ const bookEditTagList = $('bookEditTagList');
 const deleteContactToo = $('deleteContactToo');
 const btnConfirmDelete = $('btnConfirmDelete');
 const btnCancelDelete = $('btnCancelDelete');
+const bookNewTagInput = $('bookNewTagInput');
+const btnBookAddTag = $('btnBookAddTag');
+const btnManageTags = $('btnManageTags');
+const tagManage = $('tagManage');
+const tagManageClose = $('tagManageClose');
+const tagManageList = $('tagManageList');
+const manageTagNewInput = $('manageTagNewInput');
+const btnManageTagAdd = $('btnManageTagAdd');
+const linkTokenGenerator = $('linkTokenGenerator');
 
 const BOOK_EDIT_FIELDS = [
   { key: 'name', id: 'book-edit-name' },
@@ -1572,20 +1581,205 @@ function toggleTag(name) {
   renderTagList();
 }
 
-function addNewTag() {
+async function ensureTagOnServer(name) {
+  if (!name || !window.MeishiConfig || !window.MeishiConfig.isConfigured()) return;
+  try {
+    await gasFetch({ action: 'create_tag', name: name });
+  } catch (err) {
+    console.warn('create_tag:', errText(err));
+  }
+}
+
+function addTagToCatalogLocal(name) {
+  const exists = tagCatalog.some((t) => t.name === name);
+  if (!exists) tagCatalog.unshift({ name: name, resourceName: '', memberCount: -1 });
+}
+
+async function addNewTag() {
   const name = String((newTagInput && newTagInput.value) || '').trim();
   if (!name) {
     showError('追加するタグ名を入力してください');
     return;
   }
-  const exists = tagCatalog.some((t) => t.name === name);
-  if (!exists) {
-    tagCatalog.unshift({ name: name, resourceName: '', memberCount: -1 });
-  }
+  addTagToCatalogLocal(name);
   if (!isTagSelected(name)) selectedTags.push(name);
   if (newTagInput) newTagInput.value = '';
   clearError();
   renderTagList();
+  renderSearchTagList();
+  await ensureTagOnServer(name);
+}
+
+async function addBookNewTag() {
+  const name = String((bookNewTagInput && bookNewTagInput.value) || '').trim();
+  if (!name) {
+    showError('追加するタグ名を入力してください');
+    return;
+  }
+  addTagToCatalogLocal(name);
+  if (!isBookTagSelected(name)) bookEditTags.push(name);
+  if (bookNewTagInput) bookNewTagInput.value = '';
+  clearError();
+  renderBookEditTagList();
+  await ensureTagOnServer(name);
+}
+
+function remapSearchFilterTag(oldName, newName) {
+  const i = searchFilterTags.indexOf(oldName);
+  if (i < 0) return;
+  if (newName) searchFilterTags[i] = newName;
+  else searchFilterTags.splice(i, 1);
+  searchFilterTags = searchFilterTags.filter((t, idx, arr) => arr.indexOf(t) === idx);
+  saveSearchFilterTagsToStorage();
+}
+
+function remapSelectedTags(oldName, newName) {
+  const i = selectedTags.indexOf(oldName);
+  if (i >= 0) {
+    if (newName) selectedTags[i] = newName;
+    else selectedTags.splice(i, 1);
+  }
+  const j = bookEditTags.indexOf(oldName);
+  if (j >= 0) {
+    if (newName) bookEditTags[j] = newName;
+    else bookEditTags.splice(j, 1);
+  }
+}
+
+function openTagManage() {
+  if (!tagManage) return;
+  renderTagManageList();
+  tagManage.classList.add('show');
+  tagManage.setAttribute('aria-hidden', 'false');
+  document.body.style.overflow = 'hidden';
+  if (manageTagNewInput) manageTagNewInput.focus();
+}
+
+function closeTagManage() {
+  if (!tagManage) return;
+  tagManage.classList.remove('show');
+  tagManage.setAttribute('aria-hidden', 'true');
+  if (!cardDetail.classList.contains('show')) document.body.style.overflow = '';
+}
+
+function renderTagManageList() {
+  if (!tagManageList) return;
+  const ordered = tagCatalog.slice().sort((a, b) => {
+    if (b.memberCount !== a.memberCount) return b.memberCount - a.memberCount;
+    return String(a.name).localeCompare(String(b.name), 'ja');
+  });
+  if (!ordered.length) {
+    tagManageList.innerHTML = '<div class="tag-hint">タグがありません。上で新規追加できます。</div>';
+    return;
+  }
+  tagManageList.innerHTML = ordered.map((t) => {
+    const count = t.memberCount >= 0 ? '<span class="tag-count">' + t.memberCount + '</span>' : '';
+    return '<div class="tag-manage-row"><span>' + escapeHtml(t.name) + count + '</span>' +
+      '<button type="button" class="btn-tag-action" data-tag-rename="' + escapeHtml(t.name) + '">名前変更</button>' +
+      '<button type="button" class="btn-tag-action danger" data-tag-delete="' + escapeHtml(t.name) + '">削除</button></div>';
+  }).join('');
+}
+
+async function manageTagAddFromPanel() {
+  const name = String((manageTagNewInput && manageTagNewInput.value) || '').trim();
+  if (!name) {
+    showError('タグ名を入力してください');
+    return;
+  }
+  clearError();
+  try {
+    const result = await gasFetch({ action: 'create_tag', name: name });
+    if (!result || result.status !== 'success') {
+      throw new Error((result && result.message) || 'タグの追加に失敗しました');
+    }
+    if (manageTagNewInput) manageTagNewInput.value = '';
+    await loadContactTags();
+    renderTagManageList();
+    renderSearchTagList();
+    renderTagList();
+  } catch (err) {
+    showError('タグ追加: ' + errText(err));
+  }
+}
+
+async function manageTagRename(oldName) {
+  if (!oldName) return;
+  const newName = window.prompt('新しいタグ名を入力', oldName);
+  if (newName === null) return;
+  const trimmed = String(newName).trim();
+  if (!trimmed) {
+    showError('タグ名が空です');
+    return;
+  }
+  if (trimmed === oldName) return;
+  clearError();
+  setLoading(true, 'タグ名を変更しています…');
+  try {
+    const result = await gasFetch({ action: 'rename_tag', oldName: oldName, newName: trimmed });
+    if (!result || result.status !== 'success') {
+      throw new Error((result && result.message) || '名前変更に失敗しました');
+    }
+    remapSearchFilterTag(oldName, trimmed);
+    remapSelectedTags(oldName, trimmed);
+    searchCards.forEach((card) => {
+      const tags = parseTagsString(card.tags);
+      const idx = tags.indexOf(oldName);
+      if (idx >= 0) {
+        tags[idx] = trimmed;
+        card.tags = tags.join(', ');
+      }
+    });
+    await loadContactTags();
+    renderTagManageList();
+    renderSearchTagList();
+    renderTagList();
+    renderBookEditTagList();
+    runSearch({ append: false });
+    statusTitle.textContent = 'タグを変更しました';
+    statusMsg.textContent = oldName + ' → ' + trimmed + '（名刺 ' + (result.data && result.data.cardsUpdated) + ' 件）';
+    statusBox.classList.add('show');
+  } catch (err) {
+    showError('タグ名変更: ' + errText(err));
+  } finally {
+    setLoading(false, '処理中...名刺を読み取っています');
+  }
+}
+
+async function manageTagDelete(name) {
+  if (!name) return;
+  const ok = window.confirm(
+    'タグ「' + name + '」を削除しますか？\n\n' +
+      '・Google 連絡先のラベルを削除します\n' +
+      '・名刺DBの全行からこのタグを外します\n\nこの操作は取り消せません。'
+  );
+  if (!ok) return;
+  clearError();
+  setLoading(true, 'タグを削除しています…');
+  try {
+    const result = await gasFetch({ action: 'delete_tag', name: name });
+    if (!result || result.status !== 'success') {
+      throw new Error((result && result.message) || 'タグ削除に失敗しました');
+    }
+    remapSearchFilterTag(name, '');
+    remapSelectedTags(name, '');
+    searchCards.forEach((card) => {
+      const tags = parseTagsString(card.tags).filter((t) => t !== name);
+      card.tags = tags.length ? tags.join(', ') : '';
+    });
+    await loadContactTags();
+    renderTagManageList();
+    renderSearchTagList();
+    renderTagList();
+    renderBookEditTagList();
+    runSearch({ append: false });
+    statusTitle.textContent = 'タグを削除しました';
+    statusMsg.textContent = name + '（名刺 ' + (result.data && result.data.cardsUpdated) + ' 件から除去）';
+    statusBox.classList.add('show');
+  } catch (err) {
+    showError('タグ削除: ' + errText(err));
+  } finally {
+    setLoading(false, '処理中...名刺を読み取っています');
+  }
 }
 
 function loadSearchFilterTagsFromStorage() {
@@ -2260,6 +2454,10 @@ cardDetail.addEventListener('click', (event) => {
   if (event.target === cardDetail) closeCardDetail();
 });
 document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && tagManage && tagManage.classList.contains('show')) {
+    closeTagManage();
+    return;
+  }
   if (event.key === 'Escape' && cardDetail.classList.contains('show')) {
     if (cardDetailMode === 'edit' || cardDetailMode === 'delete') {
       cardDetailMode = 'view';
@@ -2303,6 +2501,57 @@ if (bookEditTagList) {
     const chip = event.target.closest && event.target.closest('[data-book-tag]');
     if (!chip) return;
     toggleBookEditTag(chip.getAttribute('data-book-tag'));
+  });
+}
+
+onClick(btnBookAddTag, addBookNewTag);
+if (bookNewTagInput) {
+  bookNewTagInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      addBookNewTag();
+    }
+  });
+}
+
+onClick(btnManageTags, () => {
+  if (window.MeishiConfig && !window.MeishiConfig.isConfigured()) {
+    showError('接続設定を完了してからタグを管理できます');
+    return;
+  }
+  loadContactTags().finally(() => openTagManage());
+});
+onClick(tagManageClose, closeTagManage);
+if (tagManage) {
+  tagManage.addEventListener('click', (event) => {
+    if (event.target === tagManage) closeTagManage();
+  });
+}
+onClick(btnManageTagAdd, manageTagAddFromPanel);
+if (manageTagNewInput) {
+  manageTagNewInput.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Enter') {
+      ev.preventDefault();
+      manageTagAddFromPanel();
+    }
+  });
+}
+if (tagManageList) {
+  tagManageList.addEventListener('click', (event) => {
+    const renameBtn = event.target.closest && event.target.closest('[data-tag-rename]');
+    const deleteBtn = event.target.closest && event.target.closest('[data-tag-delete]');
+    if (renameBtn) manageTagRename(renameBtn.getAttribute('data-tag-rename'));
+    else if (deleteBtn) manageTagDelete(deleteBtn.getAttribute('data-tag-delete'));
+  });
+}
+
+if (linkTokenGenerator) {
+  linkTokenGenerator.addEventListener('click', () => {
+    const activeTab = document.querySelector('.tab.active');
+    const tab = (activeTab && activeTab.dataset.tab) === 'search' ? 'search' : 'scan';
+    try {
+      sessionStorage.setItem('meishi_return_tab', tab);
+    } catch (e) { /* ignore */ }
   });
 }
 
@@ -2427,6 +2676,16 @@ syncCropModeUI();
 window.addEventListener('resize', () => {
   if (captureGuide && captureGuide.classList.contains('show')) repositionCaptureGuide();
 });
+
+(function activateTabFromQuery() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('tab') === 'search') {
+      const tabBtn = document.querySelector('.tab[data-tab="search"]');
+      if (tabBtn) tabBtn.click();
+    }
+  } catch (e) { /* ignore */ }
+})();
 
 showCameraFor('front');
 if (window.MeishiConfig && window.MeishiConfig.isConfigured()) {

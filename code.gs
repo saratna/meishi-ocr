@@ -1,7 +1,7 @@
-// meishi-ocr GAS  20261113a
+// meishi-ocr GAS  20261114a
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
-var CODE_VERSION = '20261113a';
-var PWA_VERSION = '20261113a';
+var CODE_VERSION = '20261114a';
+var PWA_VERSION = '20261114a';
 
 function ShowCodeVersion() {
   Logger.log('CODE_VERSION = ' + CODE_VERSION);
@@ -87,6 +87,12 @@ function doPost(e) {
       return handleUpdateCard(data.cardId, data.data);
     } else if (action === 'delete_card') {
       return handleDeleteCard(data.cardId, !!data.deleteContact);
+    } else if (action === 'create_tag') {
+      return handleCreateTag(data.name);
+    } else if (action === 'rename_tag') {
+      return handleRenameTag(data.oldName, data.newName);
+    } else if (action === 'delete_tag') {
+      return handleDeleteTag(data.name);
     } else {
       // 旧互換：scan_and_save
       return handleScanAndSave(data.image);
@@ -1316,6 +1322,134 @@ function handleListTags() {
     return jsonResponse({ status: 'success', data: listContactTags() });
   } catch (e) {
     return jsonResponse({ status: 'error', message: 'タグ取得に失敗: ' + e.toString() });
+  }
+}
+
+/** lib/tag-sheet.js と同期 */
+function renameTagInField(tagsField, oldName, newName) {
+  var names = normalizeTagNames(tagsField);
+  var changed = false;
+  var out = names.map(function (n) {
+    if (n === oldName) {
+      changed = true;
+      return newName;
+    }
+    return n;
+  });
+  return { value: normalizeTagNames(out).join(', '), changed: changed };
+}
+
+function removeTagFromField(tagsField, tagName) {
+  var names = normalizeTagNames(tagsField);
+  var before = names.length;
+  var out = names.filter(function (n) { return n !== tagName; });
+  return { value: normalizeTagNames(out).join(', '), changed: out.length !== before };
+}
+
+function forEachMainSheetTagCell(callback) {
+  var sheet = sheetGetMain();
+  if (!sheet) return 0;
+  var lastRow = sheet.getLastRow();
+  if (lastRow < 2) return 0;
+  var vals = sheet.getRange(2, 18, lastRow - 1, 1).getValues();
+  var updates = 0;
+  for (var i = 0; i < vals.length; i++) {
+    var rowNum = i + 2;
+    var current = vals[i][0];
+    var next = callback(current, rowNum);
+    if (next && next.changed) {
+      sheet.getRange(rowNum, 18).setValue(next.value);
+      updates++;
+    }
+  }
+  return updates;
+}
+
+function applyTagRenameOnSheet(oldName, newName) {
+  oldName = String(oldName || '').trim();
+  newName = String(newName || '').trim();
+  if (!oldName || !newName || oldName === newName) return 0;
+  return forEachMainSheetTagCell(function (tagsField) {
+    return renameTagInField(tagsField, oldName, newName);
+  });
+}
+
+function applyTagRemoveOnSheet(tagName) {
+  tagName = String(tagName || '').trim();
+  if (!tagName) return 0;
+  return forEachMainSheetTagCell(function (tagsField) {
+    return removeTagFromField(tagsField, tagName);
+  });
+}
+
+function handleCreateTag(name) {
+  name = String(name || '').trim();
+  if (!name) {
+    return jsonResponse({ status: 'error', message: 'タグ名が必要です' });
+  }
+  try {
+    var groups = listContactTags();
+    var existing = findContactGroupByName(name, groups);
+    if (existing) {
+      return jsonResponse({ status: 'success', data: existing });
+    }
+    var created = createContactGroup(name);
+    return jsonResponse({ status: 'success', data: created });
+  } catch (e) {
+    return jsonResponse({ status: 'error', message: 'タグ作成に失敗: ' + e.toString() });
+  }
+}
+
+function handleRenameTag(oldName, newName) {
+  oldName = String(oldName || '').trim();
+  newName = String(newName || '').trim();
+  if (!oldName || !newName) {
+    return jsonResponse({ status: 'error', message: '旧名・新名が必要です' });
+  }
+  if (oldName === newName) {
+    return jsonResponse({ status: 'success', data: { oldName: oldName, newName: newName, cardsUpdated: 0 } });
+  }
+  try {
+    var groups = listContactTags();
+    if (findContactGroupByName(newName, groups)) {
+      return jsonResponse({ status: 'error', message: '「' + newName + '」は既に存在します' });
+    }
+    var group = findContactGroupByName(oldName, groups);
+    if (group && group.resourceName) {
+      People.ContactGroups.update({
+        contactGroup: { name: newName }
+      }, group.resourceName);
+    } else {
+      createContactGroup(newName);
+    }
+    var cardsUpdated = applyTagRenameOnSheet(oldName, newName);
+    return jsonResponse({
+      status: 'success',
+      data: { oldName: oldName, newName: newName, cardsUpdated: cardsUpdated }
+    });
+  } catch (e) {
+    return jsonResponse({ status: 'error', message: 'タグ名変更に失敗: ' + e.toString() });
+  }
+}
+
+function handleDeleteTag(name) {
+  name = String(name || '').trim();
+  if (!name) {
+    return jsonResponse({ status: 'error', message: 'タグ名が必要です' });
+  }
+  try {
+    var groups = listContactTags();
+    var group = findContactGroupByName(name, groups);
+    if (group && group.resourceName) {
+      People.ContactGroups.delete(group.resourceName);
+    }
+    var cardsUpdated = applyTagRemoveOnSheet(name);
+    return jsonResponse({
+      status: 'success',
+      data: { name: name, cardsUpdated: cardsUpdated }
+    });
+  } catch (e) {
+    return jsonResponse({ status: 'error', message: 'タグ削除に失敗: ' + e.toString() });
   }
 }
 
