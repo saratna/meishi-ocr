@@ -698,7 +698,8 @@
     .card-delete-actions .btn { flex: 1; margin: 0; }
     .card-book-edit[hidden],
     .card-delete-confirm[hidden],
-    .card-detail-actions[hidden] { display: none !important; }
+    .card-detail-actions[hidden],
+    #tagManageList[hidden] { display: none !important; }
     .search-toolbar-row {
       display: flex;
       flex-wrap: wrap;
@@ -1097,6 +1098,14 @@
           <input type="text" id="manageTagNewInput" placeholder="新しいタグ名" autocomplete="off">
           <button type="button" id="btnManageTagAdd" class="btn btn-add-tag">追加</button>
         </div>
+        <div id="tagDeleteConfirm" class="card-delete-confirm" hidden>
+          <p id="tagDeleteConfirmText"><strong>このタグを削除しますか？</strong></p>
+          <p class="tag-hint">Google 連絡先ラベルと名刺DB（R列）から除去します。取り消せません。</p>
+          <div class="card-delete-actions">
+            <button type="button" id="btnTagDeleteConfirm" class="btn btn-retry">削除する</button>
+            <button type="button" id="btnTagDeleteCancel" class="btn btn-retry">キャンセル</button>
+          </div>
+        </div>
         <div id="tagManageList"></div>
       </div>
     </section>
@@ -1137,6 +1146,7 @@
   <script src="lib/meishi-crop.js?v=20261112a"></script>
   <script src="lib/capture-guide.js?v=20261112a"></script>
   <script src="lib/image-edit-history.js?v=20261112a"></script>
-  <script src="app.js?v=20261114a"></script>
+  <script src="lib/gas-action-response.js?v=20261114b"></script>
+  <script src="app.js?v=20261114b"></script>
 </body>
 </html>
