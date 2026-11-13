@@ -1,7 +1,7 @@
-// meishi-ocr GAS  20261114b
+// meishi-ocr GAS  20261114c
 // 貼るときは Ctrl+A で全選択して消してから。足し貼りすると不明なエラーになる。
-var CODE_VERSION = '20261114b';
-var PWA_VERSION = '20261114b';
+var CODE_VERSION = '20261114c';
+var PWA_VERSION = '20261114c';
 
 function ShowCodeVersion() {
   Logger.log('CODE_VERSION = ' + CODE_VERSION);
@@ -1370,19 +1370,88 @@ function handleListTags() {
   }
 }
 
-function deleteContactGroupByResourceName(resourceName) {
+function deleteContactGroupViaUrlFetch(resourceName) {
   var rn = String(resourceName || '').trim();
   if (!rn) return 'resourceName がありません';
   try {
-    People.ContactGroups.delete({ resourceName: rn });
-    return '';
-  } catch (e1) {
+    var url = 'https://people.googleapis.com/v1/' + rn;
+    var resp = UrlFetchApp.fetch(url, {
+      method: 'delete',
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      muteHttpExceptions: true
+    });
+    var code = resp.getResponseCode();
+    if (code >= 200 && code < 300) return '';
+    return 'People API HTTP ' + code + ': ' + resp.getContentText().substring(0, 200);
+  } catch (e) {
+    return e.toString();
+  }
+}
+
+function deleteContactGroupByResourceName(resourceName) {
+  var rn = String(resourceName || '').trim();
+  if (!rn) return 'resourceName がありません';
+  var cg = People.ContactGroups;
+  if (cg && typeof cg.remove === 'function') {
     try {
-      People.ContactGroups.delete(rn);
+      cg.remove(rn);
       return '';
-    } catch (e2) {
-      return e2.toString();
+    } catch (eRemove) {
+      Logger.log('ContactGroups.remove: ' + eRemove.toString());
     }
+  }
+  if (cg && typeof cg.delete === 'function') {
+    try {
+      cg.delete(rn);
+      return '';
+    } catch (eDel) {
+      Logger.log('ContactGroups.delete fallback: ' + eDel.toString());
+    }
+  }
+  return deleteContactGroupViaUrlFetch(rn);
+}
+
+function updateContactGroupName(resourceName, newName) {
+  var rn = String(resourceName || '').trim();
+  var name = String(newName || '').trim();
+  if (!rn || !name) return 'resourceName または名前がありません';
+  var etag = '';
+  try {
+    var current = People.ContactGroups.get(rn, { groupFields: 'name,metadata' });
+    etag = (current && current.etag) || '';
+  } catch (eGet) {
+    Logger.log('ContactGroups.get: ' + eGet.toString());
+  }
+  var cg = People.ContactGroups;
+  if (cg && typeof cg.update === 'function') {
+    try {
+      var body = { name: name };
+      if (etag) body.etag = etag;
+      cg.update({ contactGroup: body }, rn);
+      return '';
+    } catch (eUp1) {
+      try {
+        cg.update({ contactGroup: { name: name, etag: etag } }, rn);
+        return '';
+      } catch (eUp2) {
+        Logger.log('ContactGroups.update: ' + eUp2.toString());
+      }
+    }
+  }
+  try {
+    var url = 'https://people.googleapis.com/v1/' + encodeURIComponent(rn) + '?updateMask=name';
+    var resp = UrlFetchApp.fetch(url, {
+      method: 'patch',
+      contentType: 'application/json',
+      headers: { Authorization: 'Bearer ' + ScriptApp.getOAuthToken() },
+      payload: JSON.stringify({ name: name, etag: etag || undefined }),
+      muteHttpExceptions: true
+    });
+    var code = resp.getResponseCode();
+    if (code >= 200 && code < 300) return '';
+    return 'People API HTTP ' + code + ': ' + resp.getContentText().substring(0, 200);
+  } catch (e) {
+    return e.toString();
   }
 }
 
@@ -1477,17 +1546,21 @@ function handleRenameTag(oldName, newName) {
       return jsonResponse({ status: 'error', message: '「' + newName + '」は既に存在します' });
     }
     var group = findContactGroupByName(oldName, groups);
+    var cardsUpdated = applyTagRenameOnSheet(oldName, newName);
+    var contactError = '';
     if (group && group.resourceName) {
-      People.ContactGroups.update({
-        contactGroup: { name: newName }
-      }, group.resourceName);
-    } else {
+      contactError = updateContactGroupName(group.resourceName, newName);
+    } else if (!findContactGroupByName(newName, listContactTags())) {
       createContactGroup(newName);
     }
-    var cardsUpdated = applyTagRenameOnSheet(oldName, newName);
     return jsonResponse({
       status: 'success',
-      data: { oldName: oldName, newName: newName, cardsUpdated: cardsUpdated }
+      data: {
+        oldName: oldName,
+        newName: newName,
+        cardsUpdated: cardsUpdated,
+        contactError: contactError || ''
+      }
     });
   } catch (e) {
     return jsonResponse({ status: 'error', message: 'タグ名変更に失敗: ' + e.toString() });
@@ -1504,28 +1577,23 @@ function handleDeleteTag(name) {
     var sheetNames = listSheetTagNames();
     var onSheet = sheetNames.indexOf(name) >= 0;
     var group = findContactGroupByName(name, groups);
-    var contactDeleted = false;
-    var contactError = '';
-    if (group && group.resourceName) {
-      contactError = deleteContactGroupByResourceName(group.resourceName);
-      contactDeleted = !contactError;
-      if (contactError) {
-        return jsonResponse({
-          status: 'error',
-          message: 'Google 連絡先ラベルの削除に失敗: ' + contactError
-        });
-      }
-    }
     var cardsUpdated = applyTagRemoveOnSheet(name);
     if (!onSheet && !group && cardsUpdated === 0) {
       return jsonResponse({ status: 'error', message: 'タグ「' + name + '」が見つかりませんでした' });
+    }
+    var contactError = '';
+    var contactDeleted = !(group && group.resourceName);
+    if (group && group.resourceName) {
+      contactError = deleteContactGroupByResourceName(group.resourceName);
+      contactDeleted = !contactError;
     }
     return jsonResponse({
       status: 'success',
       data: {
         name: name,
         cardsUpdated: cardsUpdated,
-        contactDeleted: contactDeleted || !(group && group.resourceName)
+        contactDeleted: contactDeleted,
+        contactError: contactError || ''
       }
     });
   } catch (e) {
@@ -1627,6 +1695,22 @@ function testListTags() {
   tags.slice(0, 30).forEach(function (t) {
     Logger.log((t.memberCount || 0) + ' : ' + t.name + ' / ' + t.resourceName);
   });
+}
+
+/**
+ * エディタで実行: testDeleteTag('削除したいタグ名')
+ * People.ContactGroups.remove / UrlFetch でラベル削除 + R列一括除去を試します。
+ */
+function testDeleteTag(name) {
+  name = String(name || '').trim();
+  if (!name) {
+    Logger.log('使い方: testDeleteTag("タグ名")');
+    return;
+  }
+  var out = handleDeleteTag(name);
+  var text = out && out.getContent ? out.getContent() : String(out);
+  Logger.log(text);
+  return text;
 }
 
 function ensureMeishiSheetHeaders(sheet) {

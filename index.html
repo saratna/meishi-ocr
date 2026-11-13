@@ -783,6 +783,71 @@
     .btn-tag-action.danger { border-color: #7a3a4a; color: #f5c4ce; }
     .tag-manage-add { display: flex; gap: 8px; margin-bottom: 16px; }
     .tag-manage-add input { flex: 1; }
+    .tag-manage-feedback {
+      margin-bottom: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .tag-manage-feedback.error { background: #4a1520; color: #ffd0d6; border: 1px solid #e94560; }
+    .tag-manage-feedback.success { background: #143524; color: #c8f0d4; border: 1px solid #2ecc71; }
+    .tag-manage-feedback.info { background: #1a2d4f; color: #dbe6ff; border: 1px solid #3a4f7a; }
+    .tag-manage-feedback[hidden] { display: none !important; }
+    .app-global-banner {
+      position: fixed;
+      top: max(8px, env(safe-area-inset-top, 0px));
+      left: 12px;
+      right: 12px;
+      z-index: 1300;
+      display: none;
+      max-width: 760px;
+      margin: 0 auto;
+      background: #4a1520;
+      color: #ffd0d6;
+      border: 1px solid #e94560;
+      border-radius: 12px;
+      padding: 12px 14px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+    }
+    .app-global-banner.show { display: block; }
+    .app-global-loading {
+      position: fixed;
+      left: 50%;
+      bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+      transform: translateX(-50%);
+      z-index: 1300;
+      padding: 12px 18px;
+      border-radius: 999px;
+      background: rgba(26, 26, 46, 0.96);
+      border: 1px solid #3a4f7a;
+      color: #e0e0e0;
+      font-size: 0.95rem;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.4);
+    }
+    .app-global-loading[hidden] { display: none !important; }
+    .app-global-status {
+      position: fixed;
+      left: 12px;
+      right: 12px;
+      bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+      z-index: 1300;
+      max-width: 760px;
+      margin: 0 auto;
+      padding: 14px 16px;
+      border-radius: 14px;
+      background: #16213e;
+      border: 1px solid #2ecc71;
+      color: #e0e0e0;
+      font-size: 0.9rem;
+      box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+    }
+    .app-global-status[hidden] { display: none !important; }
+    .app-global-status p { margin: 6px 0 0; color: #c5cad6; line-height: 1.45; }
     .app-page-footer {
       position: sticky;
       bottom: 0;
@@ -886,6 +951,13 @@
   <div class="tabs">
     <button class="tab active" type="button" data-tab="scan">スキャン</button>
     <button class="tab" type="button" data-tab="search">名刺帳</button>
+  </div>
+
+  <div id="globalErrorBanner" class="app-global-banner" role="alert" aria-live="assertive"></div>
+  <div id="globalLoading" class="app-global-loading" hidden aria-live="polite">処理中…</div>
+  <div id="globalStatus" class="app-global-status" hidden>
+    <strong id="globalStatusTitle"></strong>
+    <p id="globalStatusMsg"></p>
   </div>
 
   <div id="tab-scan" class="tab-content active">
@@ -1093,8 +1165,9 @@
         <button type="button" id="tagManageClose" class="card-detail-close" aria-label="閉じる">×</button>
       </header>
       <div class="tag-manage-body">
-        <p class="tag-hint">名前変更・削除はシートの R 列（全名刺）に反映されます。削除は Google 連絡先ラベルも消します。</p>
-        <div class="tag-manage-add">
+        <div id="tagManageFeedback" class="tag-manage-feedback" role="alert" hidden></div>
+        <p id="tagManageHint" class="tag-hint">名前変更・削除はシートの R 列（全名刺）に反映されます。削除は Google 連絡先ラベルも消します。</p>
+        <div id="tagManageAddRow" class="tag-manage-add">
           <input type="text" id="manageTagNewInput" placeholder="新しいタグ名" autocomplete="off">
           <button type="button" id="btnManageTagAdd" class="btn btn-add-tag">追加</button>
         </div>
@@ -1147,6 +1220,6 @@
   <script src="lib/capture-guide.js?v=20261112a"></script>
   <script src="lib/image-edit-history.js?v=20261112a"></script>
   <script src="lib/gas-action-response.js?v=20261114b"></script>
-  <script src="app.js?v=20261114b"></script>
+  <script src="app.js?v=20261114c"></script>
 </body>
 </html>
