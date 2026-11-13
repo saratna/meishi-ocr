@@ -652,6 +652,53 @@
     .detail-field { display: grid; grid-template-columns: 7.5rem minmax(0, 1fr); gap: 14px; padding: 12px 0; border-top: 1px solid #27324d; }
     .detail-field dt { color: #818ba0; font-size: 0.8rem; }
     .detail-field dd { margin: 0; color: #e4e7ed; line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+    .card-detail-footer {
+      padding: 16px 20px 22px;
+      border-top: 1px solid #2a3552;
+      background: #10182c;
+    }
+    .card-detail-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .card-detail-actions .btn { flex: 1; min-width: 7rem; margin: 0; }
+    .card-book-edit .form-group { margin-bottom: 12px; }
+    .card-book-edit .form-group label { display: block; font-size: 0.82rem; color: #9aa4b7; margin-bottom: 6px; }
+    .card-book-edit input,
+    .card-book-edit textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #33405f;
+      background: #16213e;
+      color: #e0e0e0;
+      font-size: 0.95rem;
+    }
+    .card-book-edit textarea { min-height: 4.5rem; resize: vertical; }
+    .card-book-edit-actions { display: flex; gap: 10px; margin-top: 14px; }
+    .card-book-edit-actions .btn { flex: 1; margin: 0; }
+    .card-delete-confirm {
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid #5a3040;
+      background: #1a1520;
+      color: #e8dce0;
+      font-size: 0.9rem;
+      line-height: 1.55;
+    }
+    .card-delete-confirm label {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin: 12px 0;
+      cursor: pointer;
+    }
+    .card-delete-actions { display: flex; gap: 10px; }
+    .card-delete-actions .btn { flex: 1; margin: 0; }
+  .card-book-edit[hidden],
+    .card-delete-confirm[hidden],
+    .card-detail-actions[hidden] { display: none !important; }
     #tab-search { max-width: 760px; }
     #tab-scan.reviewing .preview-pair {
       position: sticky;
@@ -882,6 +929,49 @@
         <button id="cardDetailClose" class="card-detail-close" type="button" aria-label="詳細を閉じる">×</button>
       </header>
       <div id="cardDetailBody" class="card-detail-body"></div>
+      <footer id="cardDetailFooter" class="card-detail-footer">
+        <div id="cardDetailViewBar" class="card-detail-actions">
+          <button type="button" id="btnCardEdit" class="btn btn-save">変更</button>
+          <button type="button" id="btnCardDelete" class="btn btn-retry">削除</button>
+        </div>
+        <div id="cardBookEditForm" class="card-book-edit" hidden>
+          <div class="form-group"><label for="book-edit-name">氏名</label><input type="text" id="book-edit-name" autocomplete="name"></div>
+          <div class="form-group"><label for="book-edit-furigana">ふりがな</label><input type="text" id="book-edit-furigana"></div>
+          <div class="form-group"><label for="book-edit-company">会社名</label><input type="text" id="book-edit-company"></div>
+          <div class="form-group"><label for="book-edit-department">部門</label><input type="text" id="book-edit-department"></div>
+          <div class="form-group"><label for="book-edit-title">役職</label><input type="text" id="book-edit-title"></div>
+          <div class="form-group"><label for="book-edit-mobile1">携帯電話1</label><input type="tel" id="book-edit-mobile1"></div>
+          <div class="form-group"><label for="book-edit-mobile2">携帯電話2</label><input type="tel" id="book-edit-mobile2"></div>
+          <div class="form-group"><label for="book-edit-phone">電話番号</label><input type="tel" id="book-edit-phone"></div>
+          <div class="form-group"><label for="book-edit-fax">FAX</label><input type="tel" id="book-edit-fax"></div>
+          <div class="form-group"><label for="book-edit-email1">メール1</label><input type="email" id="book-edit-email1"></div>
+          <div class="form-group"><label for="book-edit-email2">メール2</label><input type="email" id="book-edit-email2"></div>
+          <div class="form-group"><label for="book-edit-address">住所</label><input type="text" id="book-edit-address"></div>
+          <div class="form-group"><label for="book-edit-website">ウェブページ</label><input type="url" id="book-edit-website"></div>
+          <div class="form-group"><label for="book-edit-memo">メモ</label><textarea id="book-edit-memo"></textarea></div>
+          <div class="form-group">
+            <label for="book-edit-registeredDate">登録日</label>
+            <input type="date" id="book-edit-registeredDate">
+          </div>
+          <div class="form-group">
+            <label>タグ</label>
+            <p class="tag-hint">Google連絡先ラベルと同期します。タップで選択／解除。</p>
+            <div id="bookEditTagList" class="tag-list"></div>
+          </div>
+          <div class="card-book-edit-actions">
+            <button type="button" id="btnBookSave" class="btn btn-save">保存</button>
+            <button type="button" id="btnBookCancelEdit" class="btn btn-retry">キャンセル</button>
+          </div>
+        </div>
+        <div id="cardDeleteConfirm" class="card-delete-confirm" hidden>
+          <p><strong>この名刺を削除しますか？</strong> シートでは削除日時を付け、「名刺DB_ゴミ箱」シートにコピーを残します。Drive 上の名刺画像はゴミ箱へ移動します（復元可能）。</p>
+          <label><input type="checkbox" id="deleteContactToo"> Google 連絡先も削除する</label>
+          <div class="card-delete-actions">
+            <button type="button" id="btnConfirmDelete" class="btn btn-retry">削除する</button>
+            <button type="button" id="btnCancelDelete" class="btn btn-retry">キャンセル</button>
+          </div>
+        </div>
+      </footer>
     </section>
   </div>
 
@@ -926,6 +1016,6 @@
   <script src="lib/meishi-crop.js?v=20261112a"></script>
   <script src="lib/capture-guide.js?v=20261112a"></script>
   <script src="lib/image-edit-history.js?v=20261112a"></script>
-  <script src="app.js?v=20261112a"></script>
+  <script src="app.js?v=20261113a"></script>
 </body>
 </html>
